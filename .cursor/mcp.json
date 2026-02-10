@@ -1,0 +1,17 @@
+{
+    "mcpServers": {
+        "mysql-AI-NPC": {
+            "command": "node",
+            "args": [
+                "d:/MyWeb/MCP/mysql-mcp-server/src/index.js"
+            ],
+            "env": {
+                "DB_HOST": "localhost",
+                "DB_PORT": "3306",
+                "DB_USER": "root",
+                "DB_PASSWORD": "root",
+                "DB_NAME": "ainpc"
+            }
+        }
+    }
+}
