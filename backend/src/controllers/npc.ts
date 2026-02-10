@@ -9,7 +9,8 @@ import { chatCompletion } from '../utils/llmClient.js';
 export async function getNpcList(req: Request, res: Response) {
   try {
     const { category, status } = req.query;
-    let sql = `SELECT n.id, n.name, n.description, n.background, n.personality, n.avatar,
+    let sql = `SELECT n.id, n.name, n.description, n.background, n.personality,
+      n.gender, n.age, n.occupation, n.voice_tone, n.avatar,
       n.ai_config_id, n.system_prompt, n.category, n.prompt_type, n.status, n.sort,
       n.created_at, n.updated_at, c.name as ai_config_name, c.provider
       FROM npc n LEFT JOIN ai_config c ON n.ai_config_id = c.id WHERE 1=1`;
@@ -58,20 +59,24 @@ export async function getNpcById(req: Request, res: Response) {
 export async function createNpc(req: Request, res: Response) {
   try {
     const body = req.body as Record<string, unknown>;
-    const { name, description, background, personality, avatar, ai_config_id, system_prompt, category, prompt_type, status, sort } = body;
+    const { name, description, background, personality, gender, age, occupation, voice_tone, avatar, ai_config_id, system_prompt, category, prompt_type, status, sort } = body;
 
     if (!name || !ai_config_id) {
       return res.status(400).json({ code: -1, message: '角色名称和 AI 配置为必填' });
     }
 
     const [result] = await pool.execute(
-      `INSERT INTO npc (name, description, background, personality, avatar, ai_config_id, system_prompt, category, prompt_type, status, sort)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO npc (name, description, background, personality, gender, age, occupation, voice_tone, avatar, ai_config_id, system_prompt, category, prompt_type, status, sort)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description || null,
         background || null,
         personality || null,
+        gender || null,
+        age || null,
+        occupation || null,
+        voice_tone || null,
         avatar || null,
         ai_config_id,
         system_prompt || null,
@@ -98,7 +103,7 @@ export async function updateNpc(req: Request, res: Response) {
     const updates: string[] = [];
     const params: unknown[] = [];
 
-    const fields = ['name', 'description', 'background', 'personality', 'avatar', 'ai_config_id', 'system_prompt', 'category', 'prompt_type', 'status', 'sort'];
+    const fields = ['name', 'description', 'background', 'personality', 'gender', 'age', 'occupation', 'voice_tone', 'avatar', 'ai_config_id', 'system_prompt', 'category', 'prompt_type', 'status', 'sort'];
     for (const f of fields) {
       if (body[f] !== undefined) {
         updates.push(`${f} = ?`);
@@ -152,6 +157,10 @@ export async function generateNpcContent(req: Request, res: Response) {
   "description": "角色简介，1-2句话，用于列表展示",
   "background": "详细背景故事，含出身、经历、关系等，100-300字",
   "personality": "性格特质与待人方式，如：开朗/冷淡、谨慎/冲动",
+  "gender": "性别：male/female/other/unknown 之一",
+  "age": "年龄：具体数字或描述如青年、中年",
+  "occupation": "职业",
+  "voice_tone": "说话风格/语气，如：温和、爽朗、沉稳",
   "system_prompt": "完整的系统提示词，含人设、口吻、行为约束，可直接用作 AI 对话的角色设定"
 }`;
 
@@ -181,6 +190,10 @@ function parseNpcGenerateJson(text: string): {
   description: string;
   background: string;
   personality: string;
+  gender: string;
+  age: string;
+  occupation: string;
+  voice_tone: string;
   system_prompt: string;
 } {
   let raw = text.trim();
@@ -188,13 +201,17 @@ function parseNpcGenerateJson(text: string): {
   if (jsonBlock) {
     raw = jsonBlock[1]!.trim();
   }
-  const fallback = { description: '', background: '', personality: '', system_prompt: '' };
+  const fallback = { description: '', background: '', personality: '', gender: '', age: '', occupation: '', voice_tone: '', system_prompt: '' };
   try {
     const obj = JSON.parse(raw) as Record<string, unknown>;
     return {
       description: String(obj.description ?? ''),
       background: String(obj.background ?? ''),
       personality: String(obj.personality ?? ''),
+      gender: String(obj.gender ?? ''),
+      age: String(obj.age ?? ''),
+      occupation: String(obj.occupation ?? ''),
+      voice_tone: String(obj.voice_tone ?? ''),
       system_prompt: String(obj.system_prompt ?? ''),
     };
   } catch {

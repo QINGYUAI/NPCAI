@@ -1,0 +1,19 @@
+/**
+ * 记忆管理路由
+ */
+import { Router } from 'express';
+import { getMemories, deleteMemory, updateMemory, reflectMemories } from '../controllers/memory.js';
+
+export const memoryRouter = Router();
+
+/** 获取某 NPC 的记忆列表 */
+memoryRouter.get('/', getMemories);
+
+/** 手动触发反思 */
+memoryRouter.post('/reflect', reflectMemories);
+
+/** 删除记忆 */
+memoryRouter.delete('/:id', deleteMemory);
+
+/** 更新记忆 */
+memoryRouter.patch('/:id', updateMemory);

@@ -20,7 +20,7 @@ export const PROVIDER_MODELS: Record<string, string[]> = {
   百川智能: ['Baichuan2-Turbo', 'Baichuan2-53B', 'Baichuan2-13B'],
   零一万物: ['yi-large', 'yi-medium', 'yi-vision', 'yi-spark'],
   讯飞星火: ['spark-v3.5', 'spark-v3.0', 'spark-lite'],
-  字节豆包: ['doubao-pro', 'doubao-lite', 'doubao-pro-32k'],
+  字节豆包: ['doubao-pro', 'doubao-lite', 'doubao-pro-32k','doubao-1-5-pro-32k-250115'],
   MiniMax: ['abab6.5s', 'abab6.5', 'abab5.5-chat'],
 
   其他: ['custom'],

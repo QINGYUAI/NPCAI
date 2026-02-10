@@ -2,13 +2,14 @@
 /**
  * 角色 NPC 表单组件（新增/编辑）
  */
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { toast } from 'vue3-toastify'
 import type { Npc, CreateNpcForm } from '../types/npc'
-import { getNpcById, createNpc, updateNpc, generateNpcContent } from '../api/npc'
+import { getNpcById, createNpc, updateNpc, generateNpcContent, uploadAvatar } from '../api/npc'
 import { getConfigList } from '../api/config'
 import type { AiConfig } from '../types/config'
-import { NPC_CATEGORIES, NPC_PROMPT_TYPES } from '../constants/npc'
+import { NPC_CATEGORIES, NPC_PROMPT_TYPES, NPC_GENDERS } from '../constants/npc'
+import { resolveAvatarUrl } from '../utils/avatar'
 
 const props = defineProps<{
   id: number | null
@@ -21,6 +22,7 @@ const emit = defineEmits<{
 
 const loading = ref(false)
 const generateLoading = ref(false)
+const avatarUploading = ref(false)
 const generateHint = ref('')
 const aiConfigList = ref<AiConfig[]>([])
 const form = ref<CreateNpcForm>({
@@ -28,6 +30,10 @@ const form = ref<CreateNpcForm>({
   description: '',
   background: '',
   personality: '',
+  gender: '',
+  age: '',
+  occupation: '',
+  voice_tone: '',
   avatar: '',
   ai_config_id: 0,
   system_prompt: '',
@@ -62,6 +68,10 @@ async function loadDetail() {
         description: d.description || '',
         background: d.background || '',
         personality: d.personality || '',
+        gender: d.gender || '',
+        age: d.age || '',
+        occupation: d.occupation || '',
+        voice_tone: d.voice_tone || '',
         avatar: d.avatar || '',
         ai_config_id: d.ai_config_id,
         system_prompt: d.system_prompt || '',
@@ -91,6 +101,10 @@ function resetForm() {
     description: '',
     background: '',
     personality: '',
+    gender: '',
+    age: '',
+    occupation: '',
+    voice_tone: '',
     avatar: '',
     ai_config_id: aiConfigList.value[0]?.id ?? 0,
     system_prompt: '',
@@ -125,6 +139,10 @@ async function handleAiGenerate() {
       form.value.description = data.data.description
       form.value.background = data.data.background
       form.value.personality = data.data.personality
+      form.value.gender = data.data.gender || ''
+      form.value.age = data.data.age || ''
+      form.value.occupation = data.data.occupation || ''
+      form.value.voice_tone = data.data.voice_tone || ''
       form.value.system_prompt = data.data.system_prompt
       toast.success('AI 生成完成')
     } else {
@@ -179,6 +197,27 @@ function close() {
   emit('close')
 }
 
+/** 头像展示 URL */
+const avatarDisplayUrl = computed(() => resolveAvatarUrl(form.value.avatar))
+
+async function handleAvatarUpload(file: File) {
+  if (file.size > 2 * 1024 * 1024) {
+    toast.error('图片不超过 2MB')
+    return false
+  }
+  avatarUploading.value = true
+  try {
+    const url = await uploadAvatar(file)
+    form.value.avatar = url
+    toast.success('上传成功')
+  } catch (e) {
+    toast.error((e as Error).message || '上传失败')
+  } finally {
+    avatarUploading.value = false
+  }
+  return false
+}
+
 onMounted(loadAiConfigs)
 </script>
 
@@ -227,8 +266,72 @@ onMounted(loadAiConfigs)
           clearable
         />
       </el-form-item>
-      <el-form-item label="头像 URL">
-        <el-input v-model="form.avatar" placeholder="可选，头像图片地址" clearable />
+      <el-row :gutter="16">
+        <el-col :span="12">
+          <el-form-item label="性别">
+            <el-select v-model="form.gender" class="w-full" placeholder="选填" clearable>
+              <el-option
+                v-for="g in NPC_GENDERS"
+                :key="g.value"
+                :label="g.label"
+                :value="g.value"
+              />
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="年龄">
+            <el-input
+              v-model="form.age"
+              placeholder="如：25、青年、中年"
+              clearable
+            />
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <el-row :gutter="16">
+        <el-col :span="12">
+          <el-form-item label="职业">
+            <el-input
+              v-model="form.occupation"
+              placeholder="如：剑士、村长、商人"
+              clearable
+            />
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="说话风格">
+            <el-input
+              v-model="form.voice_tone"
+              placeholder="如：温和、爽朗、沉稳"
+              clearable
+            />
+          </el-form-item>
+        </el-col>
+      </el-row>
+      <el-form-item label="头像">
+        <div class="flex items-center gap-3">
+          <el-upload
+            :show-file-list="false"
+            :disabled="avatarUploading"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            :before-upload="(raw: File) => handleAvatarUpload(raw)"
+          >
+            <template #trigger>
+              <el-button size="small" :loading="avatarUploading">本地上传</el-button>
+            </template>
+          </el-upload>
+          <el-input
+            v-model="form.avatar"
+            placeholder="或粘贴图片 URL"
+            clearable
+            class="flex-1 min-w-0"
+          />
+        </div>
+        <p class="text-xs text-gray-500 mt-1">支持 JPG、PNG、GIF、WebP，本地上传不超过 2MB</p>
+        <div v-if="form.avatar" class="mt-2">
+          <el-avatar :src="avatarDisplayUrl" :size="64" class="rounded" />
+        </div>
       </el-form-item>
       <el-form-item label="绑定 AI 配置" required>
         <el-select v-model="form.ai_config_id" class="w-full" placeholder="选择 AI 配置">

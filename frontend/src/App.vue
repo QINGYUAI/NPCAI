@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /**
- * AINPC 主应用 - AI 配置 + 角色 NPC 管理
+ * AINPC 主应用 - AI 配置 + 角色 NPC 管理 + 对话
  */
 import { ref } from 'vue'
 import ConfigList from './components/ConfigList.vue'
 import NpcList from './components/NpcList.vue'
+import ChatView from './components/ChatView.vue'
 
 const activeTab = ref('config')
 </script>
@@ -26,6 +27,9 @@ const activeTab = ref('config')
       </el-tab-pane>
       <el-tab-pane label="角色 NPC" name="npc">
         <NpcList />
+      </el-tab-pane>
+      <el-tab-pane label="对话" name="chat">
+        <ChatView />
       </el-tab-pane>
     </el-tabs>
   </div>

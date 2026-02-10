@@ -117,16 +117,16 @@
 | 角色分类 | ✅ `category`（task / plot / custom） |
 | 全能演员模式 | ✅ 使用大模型 + System Prompt |
 | AI 辅助生成设定 | ✅ `generateNpcContent` 接口 |
-| 上下文 / 记忆系统 | ⏳ 规划中（对话记录、npc_conversation 表） |
+| 上下文 / 记忆系统 | ✅ 对话记录、npc_memory 表、对话总结注入 |
 
 ---
 
 ## 七、后期迭代方向
 
-1. **对话管理 API**：用户-NPC 对话接口、对话记录存储
-2. **上下文注入**：将 `background`、历史摘要注入对话
-3. **记忆系统**：三级记忆表结构与检索逻辑
-4. **性能优化**：流式响应、预计算缓存、异步处理
+1. **对话管理 API**：用户-NPC 对话接口、对话记录存储 ✅
+2. **上下文注入**：将 `background`、历史摘要注入对话 ✅
+3. **记忆系统**：三级记忆表结构与检索逻辑 ✅（含向量语义检索）
+4. **性能优化**：流式响应、预计算缓存、异步处理 ✅（流式 SSE）
 5. **多模态**：语音、肢体动作、表情（如有需要）
 
 ---
@@ -228,7 +228,7 @@ tick 循环 → divideIntoGroups（按距离分组）
 | - | 记忆系统（npc_memory 表） |
 | - | 对话总结、反思机制 |
 
-### 10.2 阶段一：对话 API + 对话记录（P0）
+### 10.2 阶段一：对话 API + 对话记录（P0）✅ 已实现
 
 **目标**：实现用户与 NPC 的一对一对话，并存储对话历史。
 
@@ -294,7 +294,7 @@ Body: { npc_id, session_id?, user_input }
 Response: { content: "NPC 回复", message_id }
 ```
 
-### 10.3 阶段二：记忆系统（P1）
+### 10.3 阶段二：记忆系统（P1）✅ 已实现
 
 **目标**：引入 npc_memory 表，对话后做总结入库，下一轮对话时注入相关记忆。
 
@@ -318,8 +318,8 @@ CREATE TABLE IF NOT EXISTS npc_memory (
 
 #### 2）流程
 
-1. **对话时**：按 `importance DESC` 取 top 2–5 条 memory，拼入 system 或 user 消息
-2. **对话后**：调用 LLM 总结本轮对话 → 写入 `npc_memory`（type=conversation），设 `importance`
+1. **对话时**：按 `importance DESC` 取 top 2–5 条 memory，拼入 system prompt 的【相关记忆】块
+2. **对话后**：调用 LLM 总结本轮对话（含感受：喜欢/一般/不喜欢）→ 写入 `npc_memory`（type=conversation），设 `importance`（异步不阻塞响应）
 3. **可选**：定时任务对近期记忆做 `reflectOnMemories` 式反思，生成 reflection 入库
 
 #### 3）Prompt 示例（rememberConversation）

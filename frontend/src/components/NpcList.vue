@@ -8,10 +8,14 @@ import { Plus, User } from '@element-plus/icons-vue'
 import { toast } from 'vue3-toastify'
 import type { Npc } from '../types/npc'
 import { getNpcList, deleteNpc } from '../api/npc'
-import { NPC_CATEGORIES } from '../constants/npc'
+import { NPC_CATEGORIES, NPC_GENDERS } from '../constants/npc'
 import NpcForm from './NpcForm.vue'
+import MemoryDrawer from './MemoryDrawer.vue'
+import { resolveAvatarUrl } from '../utils/avatar'
 
 const list = ref<Npc[]>([])
+const memoryDrawerVisible = ref(false)
+const memoryNpc = ref<Npc | null>(null)
 const loading = ref(false)
 const filterCategory = ref('')
 const filterStatus = ref<number | ''>('')
@@ -73,6 +77,17 @@ function onFormSuccess() {
   toast.success('保存成功')
 }
 
+function openMemory(item: Npc) {
+  memoryNpc.value = item
+  memoryDrawerVisible.value = true
+}
+
+/** 年龄展示：纯数字加「岁」，否则原样显示 */
+function formatAge(val: string | null | undefined): string {
+  if (!val) return ''
+  return /^\d+$/.test(String(val)) ? `${val}岁` : val
+}
+
 onMounted(loadList)
 </script>
 
@@ -126,7 +141,7 @@ onMounted(loadList)
         >
           <template #header>
             <div class="flex items-center gap-2">
-              <el-avatar v-if="item.avatar" :src="item.avatar" :size="28" />
+              <el-avatar v-if="item.avatar" :src="resolveAvatarUrl(item.avatar)" :size="28" />
               <el-avatar v-else :size="28">{{ item.name?.charAt(0) }}</el-avatar>
               <span class="font-semibold">{{ item.name }}</span>
               <el-tag v-if="item.category" size="small" type="info">
@@ -138,6 +153,11 @@ onMounted(loadList)
           <p v-if="item.description" class="text-sm text-gray-500 mb-2 line-clamp-2">
             {{ item.description }}
           </p>
+          <div v-if="item.gender || item.age || item.occupation" class="text-xs text-gray-500 mb-2 flex flex-wrap gap-x-2 gap-y-1">
+            <span v-if="item.gender">{{ NPC_GENDERS.find((g) => g.value === item.gender)?.label || item.gender }}</span>
+            <span v-if="item.age">{{ formatAge(item.age) }}</span>
+            <span v-if="item.occupation">{{ item.occupation }}</span>
+          </div>
           <div class="text-xs text-gray-500 mb-2">
             <span class="opacity-80">AI 配置</span> {{ item.ai_config_name || '-' }} · {{ item.provider }}
           </div>
@@ -146,6 +166,7 @@ onMounted(loadList)
           </p>
           <div class="flex flex-wrap gap-2 pt-3 border-t border-gray-700">
             <el-button size="small" @click="openEdit(item)">编辑</el-button>
+            <el-button size="small" @click="openMemory(item)">记忆</el-button>
             <el-button type="danger" plain size="small" @click="handleDelete(item)">删除</el-button>
           </div>
         </el-card>
@@ -154,6 +175,12 @@ onMounted(loadList)
   </div>
 
   <NpcForm v-if="formVisible" :id="editId" @close="formVisible = false" @success="onFormSuccess" />
+  <MemoryDrawer
+    :visible="memoryDrawerVisible"
+    :npc-id="memoryNpc?.id ?? null"
+    :npc-name="memoryNpc?.name ?? ''"
+    @close="memoryDrawerVisible = false"
+  />
 </template>
 
 <style scoped>

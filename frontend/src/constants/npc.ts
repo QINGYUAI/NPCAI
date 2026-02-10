@@ -11,3 +11,11 @@ export const NPC_PROMPT_TYPES = [
   { value: 'high', label: '高约束 (HCP)' },
   { value: 'low', label: '低约束 (LCP)' },
 ]
+
+/** 性别枚举 */
+export const NPC_GENDERS = [
+  { value: 'male', label: '男' },
+  { value: 'female', label: '女' },
+  { value: 'other', label: '其他' },
+  { value: 'unknown', label: '未知' },
+]

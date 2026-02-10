@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS npc (
   description VARCHAR(512) DEFAULT NULL COMMENT '角色简介',
   background TEXT DEFAULT NULL COMMENT '角色背景（详细背景故事、出身、经历等）',
   personality VARCHAR(512) DEFAULT NULL COMMENT '角色性格（性格特质、待人方式等）',
+  gender VARCHAR(16) DEFAULT NULL COMMENT '性别: male/female/other/unknown',
+  age VARCHAR(32) DEFAULT NULL COMMENT '年龄: 数字或描述如青年',
+  occupation VARCHAR(128) DEFAULT NULL COMMENT '职业',
+  voice_tone VARCHAR(128) DEFAULT NULL COMMENT '说话风格/语气',
   avatar VARCHAR(512) DEFAULT NULL COMMENT '头像 URL',
   ai_config_id BIGINT NOT NULL COMMENT '关联 ai_config，指定使用的 AI 模型',
   system_prompt TEXT DEFAULT NULL COMMENT '系统提示词（角色人设、口吻、行为约束）',
@@ -39,3 +43,44 @@ CREATE TABLE IF NOT EXISTS npc (
   INDEX idx_status (status),
   FOREIGN KEY (ai_config_id) REFERENCES ai_config(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色NPC表';
+
+-- NPC 对话会话表（用户与 NPC 的对话会话）
+CREATE TABLE IF NOT EXISTS npc_conversation (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+  npc_id BIGINT NOT NULL COMMENT '关联 npc',
+  user_id VARCHAR(64) DEFAULT NULL COMMENT '可选：用户标识',
+  session_id VARCHAR(64) NOT NULL COMMENT '会话唯一标识',
+  status TINYINT(1) DEFAULT 1 COMMENT '状态',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_npc_id (npc_id),
+  INDEX idx_session_id (session_id),
+  FOREIGN KEY (npc_id) REFERENCES npc(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='NPC对话会话表';
+
+-- 对话消息表（每轮对话的消息）
+CREATE TABLE IF NOT EXISTS npc_message (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+  conversation_id BIGINT NOT NULL COMMENT '关联 npc_conversation',
+  role ENUM('user','assistant') NOT NULL COMMENT 'user=用户 assistant=NPC',
+  content TEXT NOT NULL COMMENT '消息内容',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_conversation_id (conversation_id),
+  FOREIGN KEY (conversation_id) REFERENCES npc_conversation(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='对话消息表';
+
+-- NPC 记忆表（对话总结、反思、关系等，用于注入下一轮对话）
+CREATE TABLE IF NOT EXISTS npc_memory (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+  npc_id BIGINT NOT NULL COMMENT '关联 npc',
+  conversation_id BIGINT DEFAULT NULL COMMENT '关联 npc_conversation（可选）',
+  type VARCHAR(32) NOT NULL COMMENT 'conversation/reflection/relationship',
+  description TEXT NOT NULL COMMENT '记忆内容',
+  importance DECIMAL(3,2) DEFAULT 0.5 COMMENT '重要度 0-1，用于筛选',
+  related_ids JSON DEFAULT NULL COMMENT '关联记忆 id 列表',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_npc_type (npc_id, type),
+  INDEX idx_npc_importance (npc_id, importance DESC),
+  FOREIGN KEY (npc_id) REFERENCES npc(id) ON DELETE CASCADE,
+  FOREIGN KEY (conversation_id) REFERENCES npc_conversation(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='NPC记忆表';

@@ -51,10 +51,31 @@ export interface GenerateNpcResult {
   description: string
   background: string
   personality: string
+  gender?: string
+  age?: string
+  occupation?: string
+  voice_tone?: string
   system_prompt: string
 }
 
 /** AI 生成接口超时 60 秒（LLM 调用较慢） */
 export function generateNpcContent(params: GenerateNpcParams) {
   return api.post<ApiResponse<GenerateNpcResult>>('/npc/generate', params, { timeout: 60000 })
+}
+
+/** 上传头像，返回 url 路径 */
+export function uploadAvatar(file: File) {
+  const baseURL = (import.meta.env.VITE_API_BASE || 'http://localhost:3000/api').replace(/\/api\/?$/, '')
+  const formData = new FormData()
+  formData.append('file', file)
+  return fetch(`${baseURL}/api/upload/avatar`, {
+    method: 'POST',
+    body: formData,
+  }).then(async (res) => {
+    const json = await res.json()
+    if (json.code !== 0) throw new Error(json.message || '上传失败')
+    const url = json.data?.url
+    if (!url) throw new Error('未返回地址')
+    return baseURL + url
+  })
 }

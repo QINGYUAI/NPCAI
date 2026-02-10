@@ -7,6 +7,10 @@ export interface Npc {
   description: string | null
   background: string | null
   personality: string | null
+  gender: string | null
+  age: string | null
+  occupation: string | null
+  voice_tone: string | null
   avatar: string | null
   ai_config_id: number
   ai_config_name?: string
@@ -25,6 +29,10 @@ export interface CreateNpcForm {
   description: string
   background: string
   personality: string
+  gender: string
+  age: string
+  occupation: string
+  voice_tone: string
   avatar: string
   ai_config_id: number
   system_prompt: string

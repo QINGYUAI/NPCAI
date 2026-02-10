@@ -18,6 +18,10 @@ cp .env.example .env
 # 编辑 .env 填写 MySQL 连接信息
 npm install
 npm run db:init
+npm run db:migrate-npc          # 创建 npc 表
+npm run db:migrate-conversation # 创建对话相关表
+npm run db:migrate-memory       # 创建记忆表 npc_memory
+npm run db:migrate-memory-embedding  # 添加 embedding 列（语义检索）
 ```
 
 ### 2. 启动后端
@@ -69,6 +73,17 @@ AINPC/
 | PUT | /api/config/:id | 更新配置 |
 | DELETE | /api/config/:id | 删除配置 |
 | PATCH | /api/config/:id/default | 设为默认配置 |
+| POST | /api/conversation/chat | 用户与 NPC 对话（Body: npc_id, session_id?, user_input） |
+| POST | /api/conversation/chat/stream | 流式对话（SSE 逐字返回） |
+| GET | /api/conversation/conversations | 会话列表（Query: npc_id） |
+| POST | /api/conversation/conversations | 创建会话（Body: npc_id） |
+| DELETE | /api/conversation/conversations/:id | 删除会话 |
+| GET | /api/conversation/messages | 获取会话历史（Query: session_id） |
+| GET | /api/memory | 记忆列表（Query: npc_id） |
+| DELETE | /api/memory/:id | 删除记忆 |
+| PATCH | /api/memory/:id | 更新记忆 |
+| POST | /api/memory/reflect | 手动触发反思（Query: npc_id） |
+| POST | /api/upload/avatar | 上传头像（multipart/form-data, field: file） |
 
 ## 配置字段说明
 
