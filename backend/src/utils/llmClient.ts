@@ -1,8 +1,9 @@
 /**
  * 通用 LLM 调用工具（OpenAI 兼容 Chat Completions API）
- * 用于连接测试、角色生成等场景
+ * 用于连接测试、角色生成等场景，自动记录 AI 调用日志
  */
 import { PROVIDER_BASE_URLS } from './providerDefaults.js';
+import { logAiCall } from './aiLogger.js';
 
 export interface LlmConfig {
   api_key: string
@@ -12,16 +13,23 @@ export interface LlmConfig {
   max_tokens?: number
 }
 
+/** 日志上下文，可选传给 chatCompletion / chatCompletionStream / embedText */
+export interface LogContext {
+  source?: string
+  ai_config_id?: number
+  context?: Record<string, unknown>
+}
+
 /**
  * 调用 LLM 生成文本
  * @param config AI 配置信息
  * @param messages 消息列表
- * @param options 超时等选项
+ * @param options 超时等选项，可含 logContext 用于日志
  */
 export async function chatCompletion(
   config: LlmConfig,
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
-  options?: { timeout?: number; max_tokens?: number }
+  options?: { timeout?: number; max_tokens?: number; logContext?: LogContext }
 ): Promise<string> {
   const { api_key, base_url, provider, model } = config
   if (!api_key?.trim()) {
@@ -36,6 +44,9 @@ export async function chatCompletion(
     messages,
     max_tokens: options?.max_tokens ?? config.max_tokens ?? 2000,
   }
+
+  const start = Date.now()
+  const logCtx = options?.logContext
 
   const timeout = options?.timeout ?? 30000
   const controller = new AbortController()
@@ -53,6 +64,8 @@ export async function chatCompletion(
 
   clearTimeout(timer)
 
+  const duration = Date.now() - start
+
   if (!resp.ok) {
     const errText = await resp.text()
     let errMsg = `HTTP ${resp.status}`
@@ -62,14 +75,58 @@ export async function chatCompletion(
     } catch {
       errMsg = errText.slice(0, 300) || errMsg
     }
+    const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+    logAiCall({
+      api_type: 'chat',
+      provider,
+      model: model || undefined,
+      request_info: { message_count: messages.length },
+      request_content: requestContent,
+      duration_ms: duration,
+      status: 'error',
+      error_message: errMsg,
+      source: logCtx?.source,
+      ai_config_id: logCtx?.ai_config_id,
+      context: logCtx?.context,
+    })
     throw new Error(errMsg)
   }
 
   const json = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> }
   const content = json.choices?.[0]?.message?.content?.trim() || ''
   if (!content) {
+    const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+    logAiCall({
+      api_type: 'chat',
+      provider,
+      model: model || undefined,
+      request_info: { message_count: messages.length },
+      request_content: requestContent,
+      duration_ms: duration,
+      status: 'error',
+      error_message: '模型返回为空',
+      source: logCtx?.source,
+      ai_config_id: logCtx?.ai_config_id,
+      context: logCtx?.context,
+    })
     throw new Error('模型返回为空')
   }
+
+  const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+  logAiCall({
+    api_type: 'chat',
+    provider,
+    model: model || undefined,
+    request_info: { message_count: messages.length },
+    response_info: { output_length: content.length },
+    request_content: requestContent,
+    response_content: content,
+    duration_ms: duration,
+    status: 'success',
+    source: logCtx?.source,
+    ai_config_id: logCtx?.ai_config_id,
+    context: logCtx?.context,
+  })
   return content
 }
 
@@ -80,7 +137,7 @@ export async function chatCompletion(
 export async function* chatCompletionStream(
   config: LlmConfig,
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
-  options?: { timeout?: number; max_tokens?: number }
+  options?: { timeout?: number; max_tokens?: number; logContext?: LogContext }
 ): AsyncGenerator<string, void, void> {
   const { api_key, base_url, provider, model } = config
   if (!api_key?.trim()) {
@@ -97,6 +154,8 @@ export async function* chatCompletionStream(
     max_tokens: options?.max_tokens ?? config.max_tokens ?? 2000,
   }
 
+  const start = Date.now()
+  const logCtx = options?.logContext
   const timeout = options?.timeout ?? 45000
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
@@ -112,6 +171,8 @@ export async function* chatCompletionStream(
   })
 
   clearTimeout(timer)
+  const duration = Date.now() - start
+
   if (!resp.ok) {
     const errText = await resp.text()
     let errMsg = `HTTP ${resp.status}`
@@ -121,8 +182,38 @@ export async function* chatCompletionStream(
     } catch {
       errMsg = errText.slice(0, 300) || errMsg
     }
+    const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+    logAiCall({
+      api_type: 'chat_stream',
+      provider,
+      model: model || undefined,
+      request_info: { message_count: messages.length },
+      request_content: requestContent,
+      duration_ms: duration,
+      status: 'error',
+      error_message: errMsg,
+      source: logCtx?.source,
+      ai_config_id: logCtx?.ai_config_id,
+      context: logCtx?.context,
+    })
     throw new Error(errMsg)
   }
+
+  const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+  logAiCall({
+    api_type: 'chat_stream',
+    provider,
+    model: model || undefined,
+    request_info: { message_count: messages.length },
+    response_info: { stream: true },
+    request_content: requestContent,
+    response_content: '[流式响应，内容未采集]',
+    duration_ms: duration,
+    status: 'success',
+    source: logCtx?.source,
+    ai_config_id: logCtx?.ai_config_id,
+    context: logCtx?.context,
+  })
 
   const reader = resp.body?.getReader()
   if (!reader) throw new Error('无法读取流')
@@ -157,7 +248,7 @@ export async function* chatCompletionStream(
 export async function embedText(
   config: { api_key: string; base_url?: string | null; provider: string },
   text: string,
-  options?: { timeout?: number }
+  options?: { timeout?: number; logContext?: LogContext }
 ): Promise<number[]> {
   const { api_key, base_url, provider } = config
   if (!api_key?.trim()) throw new Error('未设置 API Key')
@@ -165,11 +256,14 @@ export async function embedText(
   const base = (base_url && base_url.trim()) || PROVIDER_BASE_URLS[provider] || 'https://api.openai.com/v1'
   const url = base.replace(/\/$/, '') + '/embeddings'
 
+  const inputLen = Math.min(text.length, 8000)
   const body = {
     model: 'text-embedding-3-small',
-    input: text.slice(0, 8000), // 限制长度
+    input: text.slice(0, 8000),
   }
 
+  const start = Date.now()
+  const logCtx = options?.logContext
   const timeout = options?.timeout ?? 10000
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
@@ -181,15 +275,61 @@ export async function embedText(
     signal: controller.signal,
   })
   clearTimeout(timer)
+  const duration = Date.now() - start
 
+  const inputText = text.slice(0, 8000);
   if (!resp.ok) {
     const errText = await resp.text()
-    throw new Error(errText.slice(0, 200) || `HTTP ${resp.status}`)
+    const errMsg = errText.slice(0, 300) || `HTTP ${resp.status}`
+    logAiCall({
+      api_type: 'embed',
+      provider,
+      model: 'text-embedding-3-small',
+      request_info: { input_length: inputLen },
+      request_content: inputText,
+      duration_ms: duration,
+      status: 'error',
+      error_message: errMsg,
+      source: logCtx?.source,
+      ai_config_id: logCtx?.ai_config_id,
+      context: logCtx?.context,
+    })
+    throw new Error(errMsg)
   }
 
   const json = (await resp.json()) as { data?: Array<{ embedding?: number[] }> }
   const embedding = json.data?.[0]?.embedding
-  if (!Array.isArray(embedding)) throw new Error('Embedding 返回格式异常')
+  if (!Array.isArray(embedding)) {
+    logAiCall({
+      api_type: 'embed',
+      provider,
+      model: 'text-embedding-3-small',
+      request_info: { input_length: inputLen },
+      request_content: inputText,
+      duration_ms: duration,
+      status: 'error',
+      error_message: 'Embedding 返回格式异常',
+      source: logCtx?.source,
+      ai_config_id: logCtx?.ai_config_id,
+      context: logCtx?.context,
+    })
+    throw new Error('Embedding 返回格式异常')
+  }
+
+  logAiCall({
+    api_type: 'embed',
+    provider,
+    model: 'text-embedding-3-small',
+    request_info: { input_length: inputLen },
+    response_info: { embedding_dim: embedding.length },
+    request_content: inputText,
+    response_content: `[向量维度: ${embedding.length}]`,
+    duration_ms: duration,
+    status: 'success',
+    source: logCtx?.source,
+    ai_config_id: logCtx?.ai_config_id,
+    context: logCtx?.context,
+  })
   return embedding
 }
 

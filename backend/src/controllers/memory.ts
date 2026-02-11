@@ -5,6 +5,28 @@ import { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
 import { chatCompletion } from '../utils/llmClient.js';
 
+/** 获取某 NPC 的最近思考记录（wander/对话思考，按时间倒序，供轮询实时展示） */
+export async function getRecentThoughts(req: Request, res: Response) {
+  try {
+    const npc_id = Number(req.query.npc_id);
+    if (!npc_id || isNaN(npc_id)) {
+      return res.status(400).json({ code: -1, message: 'npc_id 必填' });
+    }
+    const [rows] = await pool.execute(
+      `SELECT id, npc_id, type, description, created_at
+       FROM npc_memory
+       WHERE npc_id = ? AND type IN ('wander', 'conversation')
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [npc_id]
+    );
+    res.json({ code: 0, data: rows });
+  } catch (err) {
+    console.error('getRecentThoughts:', err);
+    res.status(500).json({ code: -1, message: '获取思考记录失败' });
+  }
+}
+
 /** 获取某 NPC 的记忆列表 */
 export async function getMemories(req: Request, res: Response) {
   try {

@@ -6,6 +6,7 @@ import { ref } from 'vue'
 import ConfigList from './components/ConfigList.vue'
 import NpcList from './components/NpcList.vue'
 import ChatView from './components/ChatView.vue'
+import MapView from './components/MapView.vue'
 
 const activeTab = ref('config')
 </script>
@@ -30,6 +31,9 @@ const activeTab = ref('config')
       </el-tab-pane>
       <el-tab-pane label="对话" name="chat">
         <ChatView />
+      </el-tab-pane>
+      <el-tab-pane label="地图" name="map">
+        <MapView />
       </el-tab-pane>
     </el-tabs>
   </div>

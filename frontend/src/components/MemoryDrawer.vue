@@ -8,11 +8,16 @@ import { toast } from 'vue3-toastify'
 import { getMemories, deleteMemory, updateMemory, reflectMemories } from '../api/memory'
 import type { MemoryItem } from '../api/conversation'
 
-const props = defineProps<{
-  visible: boolean
-  npcId: number | null
-  npcName: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    visible: boolean
+    npcId: number | null
+    npcName: string
+    /** 标题后缀，默认「记忆」；地图点击 NPC 时可传「思考记录」 */
+    titleSuffix?: string
+  }>(),
+  { titleSuffix: '记忆' }
+)
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -100,7 +105,12 @@ async function handleDelete(item: MemoryItem) {
 }
 
 function typeLabel(t: string) {
-  const m: Record<string, string> = { conversation: '对话', reflection: '反思', relationship: '关系' }
+  const m: Record<string, string> = {
+    conversation: '对话',
+    reflection: '反思',
+    relationship: '关系',
+    wander: '思考',
+  }
   return m[t] || t
 }
 
@@ -126,7 +136,7 @@ async function doReflect() {
 <template>
   <el-drawer
     :model-value="visible"
-    :title="`${npcName} 的记忆`"
+    :title="`${npcName} 的${titleSuffix}`"
     direction="rtl"
     size="400"
     @close="emit('close')"

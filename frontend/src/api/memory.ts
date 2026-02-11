@@ -20,6 +20,19 @@ export function getMemories(npcId: number) {
   return api.get<ApiResponse<MemoryItem[]>>('/memory', { params: { npc_id: npcId } })
 }
 
+/** 获取某 NPC 的最近思考记录（wander/对话思考，按时间，供轮询实时展示） */
+export function getRecentThoughts(npcId: number) {
+  return api.get<ApiResponse<ThoughtItem[]>>('/memory/thoughts', { params: { npc_id: npcId } })
+}
+
+export interface ThoughtItem {
+  id: number
+  npc_id: number
+  type: string
+  description: string
+  created_at: string
+}
+
 /** 删除记忆 */
 export function deleteMemory(id: number) {
   return api.delete<ApiResponse<void>>(`/memory/${id}`)

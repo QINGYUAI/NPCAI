@@ -4,25 +4,29 @@
 
 ## 技术栈
 
-- **前端**: Vue 3 + Vite + TypeScript
+- **前端**: Vue 3 + Vite + TypeScript，地图渲染 Phaser
 - **后端**: Node.js + Express
-- **数据库**: MySQL
+- **数据库**: MySQL + Redis（地图/NPC 实时状态）
+- **实时推送**: WebSocket（需鉴权，多用户隔离）
 
 ## 快速开始
 
-### 1. 数据库初始化
+### 1. 数据库与 Redis
 
 ```bash
 cd backend
 cp .env.example .env
-# 编辑 .env 填写 MySQL 连接信息
+# 编辑 .env 填写 MySQL、Redis 连接信息
 npm install
 npm run db:init
 npm run db:migrate-npc          # 创建 npc 表
 npm run db:migrate-conversation # 创建对话相关表
 npm run db:migrate-memory       # 创建记忆表 npc_memory
-npm run db:migrate-memory-embedding  # 添加 embedding 列（语义检索）
+npm run db:migrate-memory-embedding  # 添加 embedding 列
+npm run db:migrate-map          # 创建 game_map、npc_map_binding 等表
 ```
+
+需先启动 Redis（如 `redis-server` 或 Docker）。
 
 ### 2. 启动后端
 
@@ -84,6 +88,17 @@ AINPC/
 | PATCH | /api/memory/:id | 更新记忆 |
 | POST | /api/memory/reflect | 手动触发反思（Query: npc_id） |
 | POST | /api/upload/avatar | 上传头像（multipart/form-data, field: file） |
+| GET | /api/map | 地图列表 |
+| GET | /api/map/:id | 地图详情 |
+| POST | /api/map | 创建地图 |
+| PUT | /api/map/:id | 更新地图 |
+| DELETE | /api/map/:id | 删除地图 |
+| GET | /api/map/:mapId/bindings | 地图绑定的 NPC |
+| POST | /api/map/:mapId/bindings | 添加 NPC 到地图 |
+| DELETE | /api/map/:mapId/bindings/:npcId | 移除绑定 |
+| POST | /api/map/:mapId/init | 初始化场景（写入 Redis） |
+| GET | /api/map/:mapId/state | 场景实时状态 |
+| WebSocket | ws://host/ws?token=xxx&mapId=1 | 地图状态推送 |
 
 ## 配置字段说明
 

@@ -2,9 +2,18 @@
  * 记忆管理路由
  */
 import { Router } from 'express';
-import { getMemories, deleteMemory, updateMemory, reflectMemories } from '../controllers/memory.js';
+import {
+  getMemories,
+  getRecentThoughts,
+  deleteMemory,
+  updateMemory,
+  reflectMemories,
+} from '../controllers/memory.js';
 
 export const memoryRouter = Router();
+
+/** 获取某 NPC 的最近思考记录（按时间，供轮询） */
+memoryRouter.get('/thoughts', getRecentThoughts);
 
 /** 获取某 NPC 的记忆列表 */
 memoryRouter.get('/', getMemories);
