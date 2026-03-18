@@ -1,5 +1,6 @@
 /**
  * 地图与场景路由
+ * 重构后从 map 模块导入控制器
  */
 import { Router } from 'express';
 import multer from 'multer';
@@ -24,7 +25,9 @@ import {
   startMap,
   pauseMapController,
   resumeMapController,
-} from '../controllers/map.js';
+  validateBody,
+  createMapSchema,
+} from '../map/index.js';
 
 const layoutUpload = multer({
   storage: multer.diskStorage({
@@ -49,7 +52,7 @@ export const mapRouter = Router();
 
 // 地图 CRUD
 mapRouter.get('/', getMapList);
-mapRouter.post('/', createMap);
+mapRouter.post('/', validateBody(createMapSchema), createMap);
 // AI 生成地图配置
 mapRouter.post('/generate', generateMapContent);
 // 室内布局图上传转地图（需 Vision 模型）
