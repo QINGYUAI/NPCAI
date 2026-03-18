@@ -1,18 +1,12 @@
 /**
  * 对话 API - 用户与 NPC 聊天
  */
-import axios from 'axios'
+import { conversationApi } from './client.js'
+import type { ApiResponse } from './client.js'
+import type { MemoryItem } from '../types/memory.js'
+import type { MessageRecord, ConversationItem } from '../types/conversation.js'
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || 'http://localhost:3000/api',
-  timeout: 60000, // 对话接口 LLM 调用较慢
-})
-
-export interface ApiResponse<T> {
-  code: number
-  data?: T
-  message?: string
-}
+export type { ApiResponse, MemoryItem, MessageRecord, ConversationItem }
 
 /** 对话请求参数 */
 export interface ChatParams {
@@ -31,10 +25,10 @@ export interface ChatResult {
 
 /** 发送消息与 NPC 对话 */
 export function chat(params: ChatParams) {
-  return api.post<ApiResponse<ChatResult>>('/conversation/chat', params)
+  return conversationApi.post<ApiResponse<ChatResult>>('/conversation/chat', params)
 }
 
-/** 流式对话：逐字返回，onChunk 接收内容片段，onDone 接收完整结果 */
+/** 流式对话：逐字返回（使用 fetch 支持 SSE），onChunk 接收内容片段，onDone 接收完整结果 */
 export async function chatStream(
   params: ChatParams,
   callbacks: {
@@ -95,56 +89,29 @@ export async function chatStream(
   }
 }
 
-/** 消息记录 */
-export interface MessageRecord {
-  id: number
-  role: 'user' | 'assistant'
-  content: string
-  created_at: string
-}
-
 /** 获取会话历史消息 */
 export function getMessages(sessionId: string) {
-  return api.get<ApiResponse<MessageRecord[]>>('/conversation/messages', {
+  return conversationApi.get<ApiResponse<MessageRecord[]>>('/conversation/messages', {
     params: { session_id: sessionId },
   })
 }
 
-/** 会话摘要 */
-export interface ConversationItem {
-  id: number
-  session_id: string
-  created_at: string
-  msg_count: number
-  last_preview: string | null
-}
-
 /** 获取某 NPC 的会话列表 */
 export function getConversations(npcId: number) {
-  return api.get<ApiResponse<ConversationItem[]>>('/conversation/conversations', {
+  return conversationApi.get<ApiResponse<ConversationItem[]>>('/conversation/conversations', {
     params: { npc_id: npcId },
   })
 }
 
 /** 创建新会话 */
 export function createConversation(npcId: number) {
-  return api.post<ApiResponse<{ id: number; session_id: string }>>('/conversation/conversations', {
+  return conversationApi.post<ApiResponse<{ id: number; session_id: string }>>('/conversation/conversations', {
     npc_id: npcId,
   })
 }
 
 /** 删除会话 */
 export function deleteConversation(id: number) {
-  return api.delete<ApiResponse<void>>(`/conversation/conversations/${id}`)
+  return conversationApi.delete<ApiResponse<void>>(`/conversation/conversations/${id}`)
 }
 
-/** 记忆项 */
-export interface MemoryItem {
-  id: number
-  npc_id: number
-  conversation_id: number | null
-  type: string
-  description: string
-  importance: number
-  created_at: string
-}

@@ -12,6 +12,7 @@ import { conversationRouter } from './routes/conversation.js';
 import { memoryRouter } from './routes/memory.js';
 import { uploadRouter } from './routes/upload.js';
 import { mapRouter } from './routes/map.js';
+import { itemRouter } from './routes/item.js';
 import { aiLogRouter } from './routes/aiLog.js';
 import { initWsServer } from './ws/server.js';
 import { startWanderLoop } from './services/wander.js';
@@ -36,6 +37,7 @@ app.use('/api/conversation', conversationRouter);
 app.use('/api/memory', memoryRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/map', mapRouter);
+app.use('/api/item', itemRouter);
 app.use('/api/ai-logs', aiLogRouter);
 
 // 健康检查

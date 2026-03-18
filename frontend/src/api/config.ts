@@ -1,19 +1,11 @@
 /**
  * AI 配置 API 接口
  */
-import axios from 'axios'
-import type { AiConfig, CreateConfigForm } from '../types/config'
+import { api } from './client.js'
+import type { ApiResponse } from './client.js'
+import type { AiConfig, CreateConfigForm } from '../types/config.js'
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || 'http://localhost:3000/api',
-  timeout: 10000,
-})
-
-export interface ApiResponse<T> {
-  code: number
-  data?: T
-  message?: string
-}
+export type { ApiResponse }
 
 /** 获取配置列表 */
 export function getConfigList(params?: { provider?: string; status?: number }) {

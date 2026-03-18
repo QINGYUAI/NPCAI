@@ -66,7 +66,7 @@ async function selectNpc(npc: Npc) {
   conversationId.value = null
   await loadConversations()
   if (conversationList.value.length > 0) {
-    selectConversation(conversationList.value[0])
+    selectConversation(conversationList.value[0]!)
   } else {
     await newSession()
   }
@@ -96,17 +96,13 @@ async function newSession() {
 
 async function handleDeleteConv(item: ConversationItem) {
   try {
-    await ElMessageBox.confirm(`确定删除此会话？共 ${item.msg_count} 条消息将被清除。`, '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
+    await ElMessageBox.confirm(`确定删除此会话？共 ${item.msg_count} 条消息将被清除。`)
     const { data } = await deleteConversation(item.id)
     if (data.code === 0) {
       conversationList.value = conversationList.value.filter((c) => c.id !== item.id)
       if (conversationId.value === item.id) {
         if (conversationList.value.length > 0) {
-          selectConversation(conversationList.value[0])
+          selectConversation(conversationList.value[0]!)
         } else {
           sessionId.value = null
           conversationId.value = null

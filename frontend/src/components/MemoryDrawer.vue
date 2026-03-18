@@ -69,7 +69,8 @@ async function saveEdit() {
     if (data.code === 0) {
       const idx = list.value.findIndex((m) => m.id === editingId.value)
       if (idx >= 0) {
-        list.value[idx] = { ...list.value[idx], description: editingDesc.value, importance: editingImp.value }
+        const prev = list.value[idx]!
+        list.value[idx] = { ...prev, description: editingDesc.value, importance: editingImp.value }
       }
       editingId.value = null
       toast.success('已更新')

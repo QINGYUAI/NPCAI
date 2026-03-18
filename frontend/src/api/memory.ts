@@ -1,19 +1,11 @@
 /**
  * NPC 记忆管理 API
  */
-import axios from 'axios'
-import type { MemoryItem } from './conversation'
+import { api } from './client.js'
+import type { ApiResponse } from './client.js'
+import type { MemoryItem, ThoughtItem } from '../types/memory.js'
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || 'http://localhost:3000/api',
-  timeout: 10000,
-})
-
-export interface ApiResponse<T> {
-  code: number
-  data?: T
-  message?: string
-}
+export type { ApiResponse, MemoryItem, ThoughtItem }
 
 /** 获取某 NPC 的记忆列表 */
 export function getMemories(npcId: number) {
@@ -23,14 +15,6 @@ export function getMemories(npcId: number) {
 /** 获取某 NPC 的最近思考记录（wander/对话思考，按时间，供轮询实时展示） */
 export function getRecentThoughts(npcId: number) {
   return api.get<ApiResponse<ThoughtItem[]>>('/memory/thoughts', { params: { npc_id: npcId } })
-}
-
-export interface ThoughtItem {
-  id: number
-  npc_id: number
-  type: string
-  description: string
-  created_at: string
 }
 
 /** 删除记忆 */

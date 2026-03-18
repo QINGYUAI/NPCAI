@@ -15,7 +15,8 @@
     "db:migrate-memory": "tsx src/db/migrate-memory.ts",
     "db:migrate-memory-embedding": "tsx src/db/migrate-memory-embedding.ts",
     "db:migrate-map": "tsx src/db/migrate-map.ts",
-    "db:migrate-ai-log": "tsx src/db/migrate-ai-log.ts"
+    "db:migrate-ai-log": "tsx src/db/migrate-ai-log.ts",
+    "db:migrate-item": "tsx src/db/migrate-item.ts"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",

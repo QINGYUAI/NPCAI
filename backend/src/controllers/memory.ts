@@ -3,7 +3,7 @@
  */
 import { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
-import { chatCompletion } from '../utils/llmClient.js';
+import { reflectOnMemories } from '../services/memoryReflect.js';
 
 /** 获取某 NPC 的最近思考记录（wander/对话思考，按时间倒序，供轮询实时展示） */
 export async function getRecentThoughts(req: Request, res: Response) {
@@ -98,7 +98,7 @@ export async function updateMemory(req: Request, res: Response) {
   }
 }
 
-/** 手动触发反思：从近期记忆提炼洞察 */
+/** 手动触发反思：从近期记忆提炼洞察（使用统一 memoryReflect 服务） */
 export async function reflectMemories(req: Request, res: Response) {
   try {
     const npc_id = Number(req.query.npc_id);
@@ -118,40 +118,17 @@ export async function reflectMemories(req: Request, res: Response) {
     }
     const npc = npcList[0];
 
-    const [rows] = await pool.execute(
-      'SELECT description FROM npc_memory WHERE npc_id = ? ORDER BY id DESC LIMIT 30',
-      [npc_id]
-    );
-    const memories = (rows as { description: string }[]).map((r) => r.description);
-    if (memories.length < 3) {
+    const result = await reflectOnMemories(npc_id, npc.name, {
+      api_key: npc.api_key!,
+      base_url: npc.base_url,
+      provider: npc.provider,
+      model: npc.model,
+      max_tokens: npc.max_tokens,
+    });
+    if (result.added === 0) {
       return res.status(400).json({ code: -1, message: '记忆不足 3 条，无法反思' });
     }
-
-    const prompt = `你是${npc.name}。以下是近期记忆列表：\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}\n\n请从这些记忆中提炼 3 条高层级洞察或认知，每条 1 句话。直接输出，每行一条。`;
-    const resp = await chatCompletion(
-      {
-        api_key: npc.api_key!,
-        base_url: npc.base_url,
-        provider: npc.provider,
-        model: npc.model,
-        max_tokens: npc.max_tokens,
-      },
-      [{ role: 'user' as const, content: prompt }],
-      { timeout: 20000, max_tokens: 300 }
-    );
-    const lines = resp
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    let added = 0;
-    for (const line of lines.slice(0, 3)) {
-      await pool.execute(
-        'INSERT INTO npc_memory (npc_id, type, description, importance) VALUES (?, ?, ?, ?)',
-        [npc_id, 'reflection', line, 0.7]
-      );
-      added++;
-    }
-    res.json({ code: 0, message: `已生成 ${added} 条反思`, data: { added } });
+    res.json({ code: 0, message: `已生成 ${result.added} 条反思`, data: { added: result.added } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : '反思失败';
     console.error('reflectMemories:', err);

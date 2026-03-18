@@ -20,6 +20,10 @@ export interface LogContext {
   context?: Record<string, unknown>
 }
 
+/** 视觉 API 支持：content 可为 string 或多模态内容块 */
+type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+type MessageContent = string | ContentPart[];
+
 /**
  * 调用 LLM 生成文本
  * @param config AI 配置信息
@@ -28,7 +32,7 @@ export interface LogContext {
  */
 export async function chatCompletion(
   config: LlmConfig,
-  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: MessageContent }>,
   options?: { timeout?: number; max_tokens?: number; logContext?: LogContext }
 ): Promise<string> {
   const { api_key, base_url, provider, model } = config
@@ -75,7 +79,9 @@ export async function chatCompletion(
     } catch {
       errMsg = errText.slice(0, 300) || errMsg
     }
-    const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+    const serializeContent = (c: MessageContent) =>
+      typeof c === 'string' ? c : c.map((p) => (p.type === 'text' ? p.text : '[image]')).join('\n');
+    const requestContent = messages.map((m) => `[${m.role}]: ${serializeContent(m.content)}`).join('\n---\n');
     logAiCall({
       api_type: 'chat',
       provider,
@@ -95,7 +101,9 @@ export async function chatCompletion(
   const json = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> }
   const content = json.choices?.[0]?.message?.content?.trim() || ''
   if (!content) {
-    const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+    const serializeContent = (c: MessageContent) =>
+      typeof c === 'string' ? c : c.map((p) => (p.type === 'text' ? p.text : '[image]')).join('\n');
+    const requestContent = messages.map((m) => `[${m.role}]: ${serializeContent(m.content)}`).join('\n---\n');
     logAiCall({
       api_type: 'chat',
       provider,
@@ -112,7 +120,9 @@ export async function chatCompletion(
     throw new Error('模型返回为空')
   }
 
-  const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+  const serializeContent = (c: MessageContent) =>
+    typeof c === 'string' ? c : c.map((p) => (p.type === 'text' ? p.text : '[image]')).join('\n');
+  const requestContent = messages.map((m) => `[${m.role}]: ${serializeContent(m.content)}`).join('\n---\n');
   logAiCall({
     api_type: 'chat',
     provider,
@@ -150,7 +160,6 @@ export async function* chatCompletionStream(
   const body = {
     model: model || 'gpt-3.5-turbo',
     messages,
-    stream: true,
     max_tokens: options?.max_tokens ?? config.max_tokens ?? 2000,
   }
 
@@ -182,7 +191,9 @@ export async function* chatCompletionStream(
     } catch {
       errMsg = errText.slice(0, 300) || errMsg
     }
-    const requestContent = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n---\n');
+    const serializeContent = (c: MessageContent) =>
+      typeof c === 'string' ? c : c.map((p) => (p.type === 'text' ? p.text : '[image]')).join('\n');
+    const requestContent = messages.map((m) => `[${m.role}]: ${serializeContent(m.content)}`).join('\n---\n');
     logAiCall({
       api_type: 'chat_stream',
       provider,

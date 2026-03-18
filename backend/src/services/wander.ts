@@ -3,11 +3,18 @@
  * 1. 每个 NPC 基于 AI 思考决定移动，思考存入 npc_memory
  * 2. 多个 NPC 移动、思考互不干扰
  * 3. 相遇或看到对方时触发 NPC-NPC 对话思考
+ * 4. 每个 tick 全量刷新 npc_map_item(nearby)，NPC 靠近物品时写入
  */
 import { randomUUID } from 'crypto';
 import { pool } from '../db/connection.js';
 import { redis } from '../db/redis.js';
 import { chatCompletion } from '../utils/llmClient.js';
+import {
+  getBindingWorldObstacleCells,
+  getMapItemBindingsForNearby,
+  getNearbyItemNames,
+  isWithin1OfCells,
+} from './itemMap.js';
 
 const WANDER_INTERVAL_MS = 5000;
 
@@ -130,8 +137,15 @@ const CONVERSATION_ROUNDS = 6;
 async function handleEncounter(
   mapId: string,
   group: string[],
-  npcConfigMap: Map<number, { name: string; personality: string; aiConfigId: number; llmConfig: object | null }>
+  npcConfigMap: Map<number, { name: string; personality: string; aiConfigId: number; llmConfig: object | null }>,
+  options?: { mapName?: string; sceneItems?: string[] }
 ): Promise<void> {
+  const sceneHint = (() => {
+    const parts: string[] = [];
+    if (options?.mapName) parts.push(`当前在「${options.mapName}」`);
+    if (options?.sceneItems?.length) parts.push(`此地有：${options.sceneItems.join('、')}`);
+    return parts.length ? `（${parts.join('，')}）` : '';
+  })();
   const groupId = randomUUID();
   const getOthersDesc = (excludeId: string) =>
     group
@@ -176,7 +190,7 @@ async function handleEncounter(
 
         let desc: string;
         if (cfg?.llmConfig) {
-          const prompt = `你是${cfg.name}。你在地图上遇到了${othersDesc}，你们距离很近。请用1句话写出你此刻的想法（例如想打招呼、想聊什么、或想离开）。只输出这一句话。`;
+          const prompt = `你是${cfg.name}。你在地图上遇到了${othersDesc}，你们距离很近。${sceneHint ? `场景：${sceneHint}\n\n` : ''}请结合当前场景写出你此刻的想法（例如想打招呼、想聊什么、或想离开）。只输出这一句话，不要编造场景中不存在的建筑或设施。`;
           const thought = await chatCompletion(
             cfg.llmConfig as Parameters<typeof chatCompletion>[0],
             [{ role: 'user' as const, content: prompt }],
@@ -233,12 +247,11 @@ async function handleEncounter(
         history.length === 0
           ? '（对话刚开始）'
           : history.map((h) => `${h.name}：${h.content}`).join('\n');
-      const prompt = `你是${speakerName}${cfg.personality ? `，性格：${cfg.personality.slice(0, 100)}` : ''}。你正在与${othersNames}聊天。
-
+      const prompt = `你是${speakerName}${cfg.personality ? `，性格：${cfg.personality.slice(0, 100)}` : ''}。你正在与${othersNames}聊天。${sceneHint ? `\n场景：${sceneHint}\n` : ''}
 当前对话记录：
 ${historyStr}
 
-请用1-2句话自然回应（问候、闲聊、回应对方均可）。直接输出你要说的话，不要加「XXX说」等前缀。`;
+请用1-2句话自然回应（可结合所处场景聊身边建筑或设施）。直接输出你要说的话，不要加「XXX说」等前缀，不要编造场景中不存在的东西。`;
 
       try {
         const resp = await chatCompletion(
@@ -305,15 +318,42 @@ const DEFAULT_TILE_NAMES: Record<number, string> = {
 
 /** 方向相对于当前位置的偏移：(dx,dy) -> 方位名 */
 const ADJ_DIR_NAMES: Record<string, string> = {
-  '0,-1': '北侧',
-  '0,1': '南侧',
-  '1,0': '东侧',
-  '-1,0': '西侧',
+  '0,-1': '北',
+  '0,1': '南',
+  '1,0': '东',
+  '-1,0': '西',
+  '1,-1': '东北',
+  '1,1': '东南',
+  '-1,-1': '西北',
+  '-1,1': '西南',
 };
 
 /**
- * 根据 NPC 当前位置与 tile_data，生成周围环境描述（相邻格子的障碍类型）
- * tileTypeNames 来自 metadata.tile_types，由 AI 根据地图描述动态生成
+ * 根据位置与地图尺寸，生成位置区域描述（如「北侧」「中央」「西北角」）
+ */
+function getPositionZoneDesc(x: number, y: number, mapW: number, mapH: number): string {
+  const cx = mapW / 2;
+  const cy = mapH / 2;
+  const dx = (x - cx) / Math.max(1, cx);
+  const dy = (y - cy) / Math.max(1, cy);
+  const north = dy < -0.3;
+  const south = dy > 0.3;
+  const west = dx < -0.3;
+  const east = dx > 0.3;
+  if (north && west) return '西北角';
+  if (north && east) return '东北角';
+  if (south && west) return '西南角';
+  if (south && east) return '东南角';
+  if (north) return '北侧';
+  if (south) return '南侧';
+  if (west) return '西侧';
+  if (east) return '东侧';
+  return '中央';
+}
+
+/**
+ * 根据 NPC 当前位置与 tile_data，生成周围环境描述（相邻及 2 格范围内）
+ * tileTypeNames 来自 metadata.tile_types
  */
 function getSurroundingContext(
   x: number,
@@ -325,12 +365,10 @@ function getSurroundingContext(
 ): string {
   const typeNames = tileTypeNames ?? DEFAULT_TILE_NAMES;
   const dirs: [number, number][] = [
-    [0, -1],
-    [0, 1],
-    [1, 0],
-    [-1, 0],
+    [0, -1], [0, 1], [1, 0], [-1, 0],
+    [1, -1], [1, 1], [-1, -1], [-1, 1],
   ];
-  const items: string[] = [];
+  const seen = new Map<number, string[]>();
   for (const [dx, dy] of dirs) {
     const nx = x + dx;
     const ny = y + dy;
@@ -339,11 +377,18 @@ function getSurroundingContext(
     if (val > 0) {
       const name = typeNames[val] ?? '障碍物';
       const dirName = ADJ_DIR_NAMES[`${dx},${dy}`] ?? '';
-      items.push(`${dirName}有${name}`);
+      const list = seen.get(val) ?? [];
+      if (!list.includes(dirName)) list.push(dirName);
+      seen.set(val, list);
     }
   }
+  const items: string[] = [];
+  for (const [val, dirs2] of seen) {
+    const name = typeNames[val] ?? '障碍物';
+    items.push(`${dirs2.join('/')}有${name}`);
+  }
   if (items.length === 0) return '';
-  return `你身旁：${items.join('，')}。请根据周围环境产生自然的观察或想法。`;
+  return `周围环境：${items.join('，')}。`;
 }
 
 /** 根据当前坐标与地图尺寸，生成不可移动方向的提示 */
@@ -368,17 +413,26 @@ async function getAiDirection(
   llmConfig: { api_key: string; base_url?: string | null; provider: string; model?: string; max_tokens?: number },
   options?: {
     logContext?: { map_id: string; npc_id: number; ai_config_id?: number };
-    /** 周围环境描述（建筑、喷泉、水域等），用于让 NPC 产生与场景相关的思考 */
+    /** 周围环境描述（建筑、喷泉、水域等） */
     surroundingContext?: string;
+    /** 附近物品/建筑名称（如：甜品店、喷泉） */
+    nearbyItems?: string[];
+    /** 位置区域描述（如：北侧、中央、东南角） */
+    positionZone?: string;
+    /** 地图名称，用于情境感 */
+    mapName?: string;
   }
 ): Promise<{ direction: [number, number] | null; thinking: string }> {
   if (!llmConfig.api_key?.trim()) return { direction: null, thinking: '' };
   const boundaryHint = getBoundaryHint(x, y, mapW, mapH);
-  const envHint = options?.surroundingContext
-    ? `\n${options.surroundingContext}\n`
-    : '';
+  const parts: string[] = [];
+  if (options?.mapName) parts.push(`所在场景：${options.mapName}`);
+  if (options?.positionZone) parts.push(`位置：地图${options.positionZone}`);
+  if (options?.nearbyItems?.length) parts.push(`靠近：${options.nearbyItems.join('、')}`);
+  if (options?.surroundingContext) parts.push(options.surroundingContext);
+  const envHint = parts.length ? `\n${parts.join('。')}\n` : '';
   const prompt = `你是${npcName}${personality ? `，性格：${personality.slice(0, 80)}` : ''}。你正在地图上自由活动，当前位置(${x},${y})，地图范围宽${mapW}高${mapH}。
-${boundaryHint ? boundaryHint + '\n' : ''}${envHint}请先写一句话说明你此刻的想法（例如想去哪、为何停留、对周围环境的看法），再写你要做的行动。
+${boundaryHint ? boundaryHint + '\n' : ''}${envHint}【重要】你的想法必须基于上述「靠近」「周围环境」中的真实建筑/设施，不要编造不存在的场所。写出符合当前情境的自然想法（对身旁建筑的观察、想去哪、为何停留等），再写行动。
 格式：想法：(你的想法，1句话) 行动：(stay/north/south/east/west 五选一)`;
   try {
     const logContext = options?.logContext;
@@ -435,13 +489,14 @@ async function wanderOneMap(mapId: string) {
     await clearStaleGroups(mapId);
 
     const [mapRows] = await pool.execute(
-      'SELECT width, height, tile_data, metadata FROM game_map WHERE id = ?',
+      'SELECT name, width, height, tile_data, metadata FROM game_map WHERE id = ?',
       [mapId]
     );
-    const list = mapRows as { width: number; height: number; tile_data: string; metadata: string | null }[];
+    const list = mapRows as { name: string; width: number; height: number; tile_data: string; metadata: string | null }[];
     if (list.length === 0) return;
 
     const row = list[0];
+    const mapName = row.name || '';
     let tileData: number[][];
     try {
       tileData = typeof row.tile_data === 'string' ? JSON.parse(row.tile_data) : row.tile_data;
@@ -469,6 +524,14 @@ async function wanderOneMap(mapId: string) {
     }
     const mapW = Math.max(1, row.width);
     const mapH = Math.max(1, row.height);
+
+    // 加载地图物品 binding，供 NPC 附近物品判定（每 tick 加载一次）
+    let itemBindings: Awaited<ReturnType<typeof getMapItemBindingsForNearby>> = [];
+    try {
+      itemBindings = await getMapItemBindingsForNearby(Number(mapId) || 0);
+    } catch (e) {
+      console.warn('[wander] 加载地图物品失败:', mapId, e);
+    }
 
     // 校验 tile_data 与地图尺寸一致，避免越界
     const tileRows = Array.isArray(tileData) ? tileData.length : 0;
@@ -535,9 +598,14 @@ async function wanderOneMap(mapId: string) {
           const cfg = npcConfigMap.get(Number(npcId));
           if (cfg?.llmConfig) {
             const surroundingContext = getSurroundingContext(curX, curY, tileData, mapW, mapH, tileTypeNames);
+            const nearbyItems = getNearbyItemNames(curX, curY, itemBindings);
+            const positionZone = getPositionZoneDesc(curX, curY, mapW, mapH);
             const result = await getAiDirection(cfg.name, cfg.personality, curX, curY, mapW, mapH, cfg.llmConfig, {
               logContext: { map_id: mapId, npc_id: Number(npcId), ai_config_id: cfg.aiConfigId },
               surroundingContext: surroundingContext || undefined,
+              nearbyItems: nearbyItems.length ? nearbyItems : undefined,
+              positionZone: positionZone || undefined,
+              mapName: mapName || undefined,
             });
             thinking = result.thinking;
             if (result.direction) {
@@ -584,11 +652,75 @@ async function wanderOneMap(mapId: string) {
 
     // 2. 按距离分组，相遇组生成「看到对方的思考」
     const { conversationGroups } = await divideIntoGroups(mapId, npcIds);
+    const sceneItemNames = [...new Set(itemBindings.map((b) => (b.name || '').trim()).filter(Boolean))];
     for (const group of conversationGroups) {
-      await handleEncounter(mapId, group, npcConfigMap);
+      await handleEncounter(mapId, group, npcConfigMap, {
+        mapName: mapName || undefined,
+        sceneItems: sceneItemNames.length ? sceneItemNames : undefined,
+      });
+    }
+
+    // 3. 全量刷新 npc_map_item(nearby)：NPC 靠近物品时写入
+    await refreshNpcNearbyItems(mapId, npcIds);
+
+    // 4. WebSocket 推送场景状态，前端实时更新，减少轮询
+    try {
+      const { broadcastToMap } = await import('../ws/server.js');
+      const { buildSceneState } = await import('./mapScene.js');
+      const state = await buildSceneState(mapId);
+      broadcastToMap(mapId, { type: 'sceneState', ...state });
+    } catch (e) {
+      /* WebSocket 推送失败不影响主流程 */
     }
   } catch (err) {
     console.error('[wander] map:', mapId, err);
+  }
+}
+
+/** 刷新该地图上所有 NPC 的 nearby 物品关联 */
+async function refreshNpcNearbyItems(mapId: string, npcIds: string[]): Promise<void> {
+  try {
+    const [bindings] = await pool.execute(
+      `SELECT b.id, b.pos_x, b.pos_y, COALESCE(b.rotation, 0) as rotation, i.footprint
+       FROM item_map_binding b
+       JOIN item i ON b.item_id = i.id
+       WHERE b.map_id = ?`,
+      [mapId]
+    );
+    const list = bindings as { id: number; pos_x: number; pos_y: number; rotation: number; footprint: string | number[][] }[];
+    if (list.length === 0) return;
+
+    const mapIdNum = Number(mapId);
+    for (const npcId of npcIds) {
+      const data = await redis.hgetall(`map:${mapId}:npc:${npcId}`);
+      if (!data) continue;
+      const nx = Number(data.x || 0);
+      const ny = Number(data.y || 0);
+
+      await pool.execute(
+        "DELETE FROM npc_map_item WHERE npc_id = ? AND map_id = ? AND relation_type = 'nearby'",
+        [npcId, mapIdNum]
+      );
+
+      const nearbyBindingIds: number[] = [];
+      for (const b of list) {
+        const cells = getBindingWorldObstacleCells({
+          footprint: b.footprint,
+          pos_x: b.pos_x,
+          pos_y: b.pos_y,
+          rotation: b.rotation,
+        });
+        if (isWithin1OfCells(nx, ny, cells)) nearbyBindingIds.push(b.id);
+      }
+      for (const bid of nearbyBindingIds) {
+        await pool.execute(
+          'INSERT INTO npc_map_item (npc_id, map_id, item_binding_id, relation_type) VALUES (?, ?, ?, ?)',
+          [npcId, mapIdNum, bid, 'nearby']
+        );
+      }
+    }
+  } catch (e) {
+    console.warn('[wander] refreshNpcNearbyItems 失败:', mapId, e);
   }
 }
 

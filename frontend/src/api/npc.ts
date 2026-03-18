@@ -1,19 +1,12 @@
 /**
  * 角色 NPC API
  */
-import axios from 'axios'
-import type { Npc, CreateNpcForm } from '../types/npc'
+import { api } from './client.js'
+import type { ApiResponse } from './client.js'
+import { uploadAvatar } from './upload.js'
+import type { Npc, CreateNpcForm } from '../types/npc.js'
 
-const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || 'http://localhost:3000/api',
-  timeout: 10000,
-})
-
-export interface ApiResponse<T> {
-  code: number
-  data?: T
-  message?: string
-}
+export type { ApiResponse }
 
 /** 获取 NPC 列表 */
 export function getNpcList(params?: { category?: string; status?: number }) {
@@ -63,19 +56,5 @@ export function generateNpcContent(params: GenerateNpcParams) {
   return api.post<ApiResponse<GenerateNpcResult>>('/npc/generate', params, { timeout: 60000 })
 }
 
-/** 上传头像，返回 url 路径 */
-export function uploadAvatar(file: File) {
-  const baseURL = (import.meta.env.VITE_API_BASE || 'http://localhost:3000/api').replace(/\/api\/?$/, '')
-  const formData = new FormData()
-  formData.append('file', file)
-  return fetch(`${baseURL}/api/upload/avatar`, {
-    method: 'POST',
-    body: formData,
-  }).then(async (res) => {
-    const json = await res.json()
-    if (json.code !== 0) throw new Error(json.message || '上传失败')
-    const url = json.data?.url
-    if (!url) throw new Error('未返回地址')
-    return baseURL + url
-  })
-}
+/** 上传头像，返回 url 路径（使用统一 upload API） */
+export { uploadAvatar }
