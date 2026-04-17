@@ -1,18 +1,176 @@
 /**
- * AI 配置模块 - 全局样式 (Tailwind)
+ * AINPC 全局样式 (Tailwind) — 深色控制台基调，IBM Plex Sans + JetBrains Mono
  */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* 与 Element Plus dark 协调的页面级色板 */
+    --ainpc-bg-deep: #0a0e14;
+    --ainpc-surface: rgba(22, 27, 34, 0.72);
+    --ainpc-border: rgba(48, 54, 61, 0.9);
+    --ainpc-muted: #8b949e;
+    --ainpc-accent: var(--el-color-primary);
+  }
+
   body {
     @apply min-h-screen antialiased;
     font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background-color: #0d1117;
+    background-color: var(--ainpc-bg-deep);
     color: #e6edf3;
   }
+
   #app {
     @apply min-h-screen py-8 px-4;
   }
+}
+
+/* 页面背景：极淡网格 + 顶部光晕，避免纯平色 */
+@layer components {
+  .app-shell {
+    @apply relative max-w-[1200px] mx-auto;
+  }
+
+  .app-shell::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(56, 139, 253, 0.12), transparent 60%),
+      linear-gradient(rgba(48, 54, 61, 0.15) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(48, 54, 61, 0.15) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      24px 24px,
+      24px 24px;
+    background-color: var(--ainpc-bg-deep);
+  }
+
+  .font-mono-nums {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 列表页通用：说明区 + 工具条 + 内容最大宽 */
+  .ainpc-list-inner {
+    max-width: 960px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .ainpc-intro {
+    margin-bottom: 1.5rem;
+  }
+
+  .ainpc-intro-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #f0f6fc;
+    letter-spacing: -0.02em;
+  }
+
+  .ainpc-intro-desc {
+    margin-top: 0.375rem;
+    font-size: 0.875rem;
+    line-height: 1.625;
+    color: var(--ainpc-muted);
+    max-width: 42rem;
+  }
+
+  .ainpc-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--ainpc-border);
+    background: var(--ainpc-surface);
+    backdrop-filter: blur(6px);
+  }
+
+  /* 弹窗内分组标题（与 Element Plus Divider 配合） */
+  .ainpc-form-sections .el-divider__text {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--ainpc-muted);
+    text-transform: uppercase;
+  }
+
+  .ainpc-form-sections .el-divider {
+    margin: 4px 0 16px;
+  }
+}
+
+/* 列表卡片网格：与深色主题统一的 el-card 外观（非 scoped，便于多页复用） */
+.ainpc-list-cards .el-card {
+  margin-bottom: 16px;
+  border-color: var(--ainpc-border);
+  background: rgba(22, 27, 34, 0.45);
+}
+
+.ainpc-list-cards .el-card .el-card__header {
+  padding: 12px 16px;
+  border-bottom-color: var(--ainpc-border);
+}
+
+.ainpc-list-cards .el-card .el-card__body {
+  padding: 14px 16px 16px;
+}
+
+.ainpc-card--highlight {
+  border-color: var(--el-color-primary) !important;
+  box-shadow: 0 0 0 1px rgba(56, 139, 253, 0.25);
+}
+
+.ainpc-card--muted {
+  opacity: 0.72;
+}
+
+/**
+ * Element Plus 深色主题与 AINPC 对齐
+ * - main.ts 已引入 theme-chalk/dark/css-vars.css，变量仅在 html.dark 上生效
+ * - 此处覆盖部分 --el-*，使弹窗/输入区与页面 #0a0e14 基调一致（需在 EP 之后加载）
+ */
+html.dark {
+  --el-bg-color-page: #0a0e14;
+  --el-bg-color: #12171f;
+  --el-bg-color-overlay: #161b22;
+  --el-border-color: #30363d;
+  --el-border-color-dark: #30363d;
+  --el-border-color-light: #21262d;
+  --el-border-color-lighter: #30363d;
+  --el-border-color-extra-light: #21262d;
+  --el-fill-color-blank: #161b22;
+  --el-fill-color-light: #21262d;
+  --el-fill-color-lighter: #1c2128;
+  --el-text-color-primary: #e6edf3;
+  --el-text-color-regular: #c9d1d9;
+  --el-text-color-secondary: #8b949e;
+  --el-text-color-placeholder: #6e7681;
+  --el-mask-color: rgba(1, 4, 9, 0.76);
+}
+
+html.dark .el-dialog {
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  box-shadow: var(--el-box-shadow);
+}
+
+html.dark .el-dialog__header {
+  border-bottom: 1px solid #21262d;
+  margin-right: 0;
+  padding-bottom: 16px;
+}
+
+html.dark .el-dialog__footer {
+  border-top: 1px solid #21262d;
+  padding-top: 16px;
 }

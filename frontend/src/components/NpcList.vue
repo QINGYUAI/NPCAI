@@ -84,79 +84,80 @@ onMounted(loadList)
 </script>
 
 <template>
-  <div class="npc-list">
-    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+  <div class="ainpc-list-inner">
+    <header class="ainpc-intro">
+      <h2 class="ainpc-intro-title">角色 NPC</h2>
+      <p class="ainpc-intro-desc">
+        维护角色档案、人设与绑定的大模型配置；列表与「AI 配置」页采用相同布局，便于快速扫视与操作。
+      </p>
+    </header>
+
+    <section class="ainpc-toolbar" aria-label="筛选与操作">
       <div class="flex gap-2 items-center flex-wrap">
-        <el-select
-          v-model="filterCategory"
-          placeholder="全部分类"
-          clearable
-          size="default"
-          class="!w-32"
-        >
-          <el-option
-            v-for="c in NPC_CATEGORIES"
-            :key="c.value"
-            :label="c.label"
-            :value="c.value"
-          />
+        <el-select v-model="filterCategory" placeholder="全部分类" clearable size="default" class="!w-32">
+          <el-option v-for="c in NPC_CATEGORIES" :key="c.value" :label="c.label" :value="c.value" />
         </el-select>
-        <el-select
-          v-model="filterStatus"
-          placeholder="全部状态"
-          clearable
-          size="default"
-          class="!w-28"
-        >
+        <el-select v-model="filterStatus" placeholder="全部状态" clearable size="default" class="!w-28">
           <el-option label="启用" :value="1" />
           <el-option label="禁用" :value="0" />
         </el-select>
         <el-button size="default" @click="loadList">刷新</el-button>
       </div>
       <el-button type="primary" @click="openAdd">
-        <el-icon class="mr-1"><Plus /></el-icon>
+        <el-icon class="mr-1">
+          <Plus />
+        </el-icon>
         新增角色
       </el-button>
-    </div>
+    </section>
 
     <el-skeleton v-if="loading" :rows="6" animated />
     <el-empty v-else-if="list.length === 0" description="暂无角色，点击「新增角色」添加">
       <template #image>
-        <el-icon :size="48" class="text-gray-500"><User /></el-icon>
+        <el-icon :size="48" class="text-[var(--ainpc-muted)]">
+          <User />
+        </el-icon>
       </template>
     </el-empty>
-    <el-row v-else :gutter="16" class="npc-cards">
+    <el-row v-else :gutter="16" class="ainpc-list-cards">
       <el-col v-for="item in list" :key="item.id" :xs="24" :sm="12" :lg="8">
-        <el-card
-          :class="['npc-card', item.status === 0 && 'opacity-70']"
-          shadow="hover"
-        >
+        <el-card :class="[item.status === 0 && 'ainpc-card--muted']" shadow="hover">
           <template #header>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 min-w-0 flex-wrap">
               <el-avatar v-if="item.avatar" :src="resolveAvatarUrl(item.avatar)" :size="28" />
               <el-avatar v-else :size="28">{{ item.name?.charAt(0) }}</el-avatar>
-              <span class="font-semibold">{{ item.name }}</span>
+              <span class="font-semibold text-[#f0f6fc] truncate">{{ item.name }}</span>
               <el-tag v-if="item.category" size="small" type="info">
-                {{ NPC_CATEGORIES.find((c) => c.value === item.category)?.label || item.category }}
+                {{NPC_CATEGORIES.find((c) => c.value === item.category)?.label || item.category}}
               </el-tag>
               <el-tag v-if="item.status === 0" type="info" size="small">已禁用</el-tag>
             </div>
           </template>
-          <p v-if="item.description" class="text-sm text-gray-500 mb-2 line-clamp-2">
+          <p v-if="item.description" class="text-sm text-[#c9d1d9] mb-2 line-clamp-2 leading-relaxed">
             {{ item.description }}
           </p>
-          <div v-if="item.gender || item.age || item.occupation" class="text-xs text-gray-500 mb-2 flex flex-wrap gap-x-2 gap-y-1">
-            <span v-if="item.gender">{{ NPC_GENDERS.find((g) => g.value === item.gender)?.label || item.gender }}</span>
+          <div v-if="item.gender || item.age || item.occupation"
+            class="text-xs text-[var(--ainpc-muted)] mb-2 flex flex-wrap gap-x-2 gap-y-1">
+            <span v-if="item.gender">{{NPC_GENDERS.find((g) => g.value === item.gender)?.label || item.gender}}</span>
             <span v-if="item.age">{{ formatAge(item.age) }}</span>
             <span v-if="item.occupation">{{ item.occupation }}</span>
           </div>
-          <div class="text-xs text-gray-500 mb-2">
-            <span class="opacity-80">AI 配置</span> {{ item.ai_config_name || '-' }} · {{ item.provider }}
-          </div>
-          <p v-if="item.personality" class="text-xs text-gray-600 mb-3 line-clamp-1">
+          <dl class="npc-bind-meta text-xs mb-2">
+            <div class="flex justify-between gap-2">
+              <dt class="text-[var(--ainpc-muted)] shrink-0">AI 配置</dt>
+              <dd class="text-[#79c0ff] text-right truncate font-mono-nums">
+                {{ item.ai_config_name || '—' }}
+              </dd>
+            </div>
+            <div class="flex justify-between gap-2 mt-1">
+              <dt class="text-[var(--ainpc-muted)] shrink-0">提供商</dt>
+              <dd class="text-[#c9d1d9] text-right truncate">{{ item.provider || '—' }}</dd>
+            </div>
+          </dl>
+          <p v-if="item.personality" class="text-xs text-[var(--ainpc-muted)] mb-3 line-clamp-1">
             性格：{{ item.personality }}
           </p>
-          <div class="flex flex-wrap gap-2 pt-3 border-t border-gray-700">
+          <div class="flex flex-wrap gap-2 pt-3 border-t border-[var(--ainpc-border)]">
             <el-button size="small" @click="openEdit(item)">编辑</el-button>
             <el-button type="danger" plain size="small" @click="handleDelete(item)">删除</el-button>
           </div>
@@ -169,22 +170,20 @@ onMounted(loadList)
 </template>
 
 <style scoped>
-.npc-list {
-  max-width: 960px;
-  margin: 0 auto;
-}
-.npc-cards :deep(.el-card) {
-  margin-bottom: 16px;
-}
 .line-clamp-1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.npc-bind-meta dt {
+  font-size: 0.8125rem;
 }
 </style>

@@ -136,49 +136,31 @@ function close() {
 </script>
 
 <template>
-  <el-dialog
-    :model-value="true"
-    :title="id ? '编辑配置' : '新增配置'"
-    width="480px"
-    :close-on-click-modal="false"
-    destroy-on-close
-    @close="close"
-  >
-    <el-form label-position="top" @submit.prevent="submit">
+  <el-dialog :model-value="true" :title="id ? '编辑 AI 配置' : '新增 AI 配置'" class="config-form-dialog" width="560px"
+    :close-on-click-modal="false" destroy-on-close align-center @close="close">
+    <!-- 分组表单：降低长表单的认知负担 -->
+    <el-form label-position="top" class="ainpc-form-sections" @submit.prevent="submit">
+      <el-divider content-position="left">基础信息</el-divider>
       <el-form-item label="配置名称" required>
-        <el-input
-          v-model="form.name"
-          placeholder="如：生产环境 GPT-4"
-          clearable
-        />
+        <el-input v-model="form.name" placeholder="如：生产环境 GPT-4" clearable />
       </el-form-item>
       <el-form-item label="提供商">
         <el-select v-model="form.provider" class="w-full" placeholder="选择提供商">
-          <el-option
-            v-for="p in Object.keys(PROVIDER_MODELS)"
-            :key="p"
-            :label="p"
-            :value="p"
-          />
+          <el-option v-for="p in Object.keys(PROVIDER_MODELS)" :key="p" :label="p" :value="p" />
         </el-select>
       </el-form-item>
-      <el-form-item :label="id ? 'API Key (留空不修改)' : 'API Key *'">
-        <el-input
-          v-model="form.api_key"
-          type="password"
-          placeholder="sk-xxx..."
-          show-password
-          clearable
-          autocomplete="new-password"
-        />
+
+      <el-divider content-position="left">连接与密钥</el-divider>
+      <el-form-item :label="id ? 'API Key（留空不修改）' : 'API Key *'">
+        <el-input v-model="form.api_key" type="password" placeholder="sk-xxx..." show-password clearable
+          autocomplete="new-password" class="font-mono-nums" />
       </el-form-item>
       <el-form-item label="Base URL">
-        <el-input
-          v-model="form.base_url"
-          placeholder="可选，如 https://api.openai.com/v1"
-          clearable
-        />
+        <el-input v-model="form.base_url" placeholder="可选，如 https://api.openai.com/v1" clearable
+          class="font-mono-nums text-sm" />
       </el-form-item>
+
+      <el-divider content-position="left">模型与参数</el-divider>
       <el-form-item label="模型">
         <el-select v-model="form.model" class="w-full" placeholder="选择模型">
           <el-option v-for="m in modelOptions" :key="m" :label="m" :value="m" />
@@ -186,28 +168,18 @@ function close() {
       </el-form-item>
       <el-row :gutter="16">
         <el-col :span="12">
-          <el-form-item label="温度 (0-2)">
-            <el-input-number
-              v-model="form.temperature"
-              :min="0"
-              :max="2"
-              :step="0.1"
-              :precision="1"
-              class="w-full"
-            />
+          <el-form-item label="温度（0–2）">
+            <el-input-number v-model="form.temperature" :min="0" :max="2" :step="0.1" :precision="1" class="w-full" />
           </el-form-item>
         </el-col>
         <el-col :span="12">
           <el-form-item label="最大 Token">
-            <el-input-number
-              v-model="form.max_tokens"
-              :min="1"
-              :max="128000"
-              class="w-full"
-            />
+            <el-input-number v-model="form.max_tokens" :min="1" :max="128000" class="w-full" />
           </el-form-item>
         </el-col>
       </el-row>
+
+      <el-divider content-position="left">状态与其他</el-divider>
       <el-form-item label="状态">
         <el-select v-model="form.status" class="w-full">
           <el-option label="启用" :value="1" />
@@ -220,19 +192,16 @@ function close() {
         </el-checkbox>
       </el-form-item>
       <el-form-item label="备注">
-        <el-input
-          v-model="form.remark"
-          type="textarea"
-          :rows="2"
-          placeholder="可选"
-        />
+        <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="可选，如用途说明" />
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="close">取消</el-button>
-      <el-button type="primary" :loading="loading" @click="submit">
-        {{ loading ? '提交中...' : '确认' }}
-      </el-button>
+      <div class="flex justify-end gap-2">
+        <el-button @click="close">取消</el-button>
+        <el-button type="primary" :loading="loading" @click="submit">
+          {{ loading ? '提交中…' : '保存' }}
+        </el-button>
+      </div>
     </template>
   </el-dialog>
 </template>
