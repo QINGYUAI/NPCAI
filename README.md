@@ -10,44 +10,41 @@
 
 ## 快速开始
 
-### 1. 数据库
+### 1. 环境与数据库
 
 ```bash
-cd backend
-cp .env.example .env
-# 编辑 .env 填写 MySQL 连接信息
-npm install
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+# 编辑 backend/.env 填写 MySQL 等
+npm run install-all
 npm run db:init
 ```
 
-若已有旧库但缺少 NPC 扩展字段，可执行：
+若已有旧库但缺少 NPC 扩展字段：`npm run db:migrate-npc-fields`  
+需要 AI 调用日志表时：`npm run db:migrate-ai-log`
+
+### 2. 依赖（根目录一键安装前后端）
 
 ```bash
-npm run db:migrate-npc-fields
+npm run install-all
 ```
 
-需要 AI 调用日志表时：
+### 3. 开发（根目录同时启动后端 + 前端）
 
 ```bash
-npm run db:migrate-ai-log
-```
-
-### 2. 启动后端
-
-```bash
-cd backend
+# 在仓库根目录 AINPC/
+npm install   # 首次需安装根目录的 concurrently
 npm run dev
-# http://localhost:3000
+# 后端 http://localhost:3000  前端 http://localhost:5173
 ```
 
-### 3. 启动前端
+也可分别启动：`npm run dev:backend`、`npm run dev:frontend`。
+
+### 4. 仅启动某一端（可选）
 
 ```bash
-cd frontend
-cp .env.example .env
-npm install
-npm run dev
-# http://localhost:5173
+cd backend && npm run dev    # http://localhost:3000
+cd frontend && npm run dev   # http://localhost:5173
 ```
 
 ## API 接口
