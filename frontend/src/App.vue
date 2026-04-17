@@ -1,13 +1,10 @@
 <script setup lang="ts">
 /**
- * AINPC 主应用 - AI 配置 + 角色 NPC + 物品 + 对话 + 地图
+ * AINPC 主应用 - AI 配置 + 角色 NPC
  */
 import { ref } from 'vue'
 import ConfigList from './components/ConfigList.vue'
 import NpcList from './components/NpcList.vue'
-import ItemList from './components/ItemList.vue'
-import ChatView from './components/ChatView.vue'
-import MapView from './components/MapView.vue'
 
 const activeTab = ref('config')
 </script>
@@ -29,15 +26,6 @@ const activeTab = ref('config')
       </el-tab-pane>
       <el-tab-pane label="角色 NPC" name="npc">
         <NpcList />
-      </el-tab-pane>
-      <el-tab-pane label="物品" name="item">
-        <ItemList />
-      </el-tab-pane>
-      <el-tab-pane label="对话" name="chat">
-        <ChatView />
-      </el-tab-pane>
-      <el-tab-pane label="地图" name="map">
-        <MapView />
       </el-tab-pane>
     </el-tabs>
   </div>

@@ -10,12 +10,9 @@ import type { Npc } from '../types/npc'
 import { getNpcList, deleteNpc } from '../api/npc'
 import { NPC_CATEGORIES, NPC_GENDERS } from '../constants/npc'
 import NpcForm from './NpcForm.vue'
-import MemoryDrawer from './MemoryDrawer.vue'
 import { resolveAvatarUrl } from '../utils/avatar'
 
 const list = ref<Npc[]>([])
-const memoryDrawerVisible = ref(false)
-const memoryNpc = ref<Npc | null>(null)
 const loading = ref(false)
 const filterCategory = ref('')
 const filterStatus = ref<number | ''>('')
@@ -75,11 +72,6 @@ function onFormSuccess() {
   formVisible.value = false
   loadList()
   toast.success('保存成功')
-}
-
-function openMemory(item: Npc) {
-  memoryNpc.value = item
-  memoryDrawerVisible.value = true
 }
 
 /** 年龄展示：纯数字加「岁」，否则原样显示 */
@@ -166,7 +158,6 @@ onMounted(loadList)
           </p>
           <div class="flex flex-wrap gap-2 pt-3 border-t border-gray-700">
             <el-button size="small" @click="openEdit(item)">编辑</el-button>
-            <el-button size="small" @click="openMemory(item)">记忆</el-button>
             <el-button type="danger" plain size="small" @click="handleDelete(item)">删除</el-button>
           </div>
         </el-card>
@@ -175,12 +166,6 @@ onMounted(loadList)
   </div>
 
   <NpcForm v-if="formVisible" :id="editId" @close="formVisible = false" @success="onFormSuccess" />
-  <MemoryDrawer
-    :visible="memoryDrawerVisible"
-    :npc-id="memoryNpc?.id ?? null"
-    :npc-name="memoryNpc?.name ?? ''"
-    @close="memoryDrawerVisible = false"
-  />
 </template>
 
 <style scoped>

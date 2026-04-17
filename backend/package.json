@@ -9,31 +9,21 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "db:init": "tsx src/db/init.ts",
-    "db:migrate-npc": "tsx src/db/migrate-npc.ts",
-    "db:migrate-conversation": "tsx src/db/migrate-conversation.ts",
     "db:migrate-npc-fields": "tsx src/db/migrate-npc-fields.ts",
-    "db:migrate-memory": "tsx src/db/migrate-memory.ts",
-    "db:migrate-memory-embedding": "tsx src/db/migrate-memory-embedding.ts",
-    "db:migrate-map": "tsx src/db/migrate-map.ts",
-    "db:migrate-ai-log": "tsx src/db/migrate-ai-log.ts",
-    "db:migrate-item": "tsx src/db/migrate-item.ts"
+    "db:migrate-ai-log": "tsx src/db/migrate-ai-log.ts"
   },
   "dependencies": {
     "@types/multer": "^2.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
-    "ioredis": "^5.9.2",
     "multer": "^2.0.2",
-    "mysql2": "^3.11.0",
-    "ws": "^8.19.0",
-    "zod": "^3.25.76"
+    "mysql2": "^3.11.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.1",
-    "@types/ws": "^8.18.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

@@ -1,5 +1,5 @@
 /**
- * 数据库初始化脚本 - 创建 ai_config 表
+ * 数据库初始化：按 schema.sql 创建库与表（ai_config、npc、ai_call_log）
  * 执行: npm run db:init
  */
 import 'dotenv/config';

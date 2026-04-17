@@ -28,7 +28,7 @@ async function migrate() {
       duration_ms INT DEFAULT NULL COMMENT '耗时(毫秒)',
       status VARCHAR(16) NOT NULL DEFAULT 'success' COMMENT 'success/error',
       error_message TEXT DEFAULT NULL COMMENT '错误信息',
-      source VARCHAR(64) DEFAULT NULL COMMENT '调用来源：wander/conversation/memory/npc 等',
+      source VARCHAR(64) DEFAULT NULL COMMENT '调用来源：npc/generate 等',
       context JSON DEFAULT NULL COMMENT '扩展上下文',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_created (created_at),
