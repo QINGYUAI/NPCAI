@@ -14,7 +14,8 @@
     "preview": "npm run preview --prefix frontend",
     "db:init": "npm run db:init --prefix backend",
     "db:migrate-npc-fields": "npm run db:migrate-npc-fields --prefix backend",
-    "db:migrate-ai-log": "npm run db:migrate-ai-log --prefix backend"
+    "db:migrate-ai-log": "npm run db:migrate-ai-log --prefix backend",
+    "db:migrate-scene": "npm run db:migrate-scene --prefix backend"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

@@ -1,6 +1,15 @@
 /**
  * 角色 NPC 类型定义
  */
+
+/** NPC 侧查看「所属场景」列表（M2） */
+export interface NpcSceneLink {
+  scene_id: number
+  scene_name: string
+  scene_category: string | null
+  role_note: string | null
+}
+
 export interface Npc {
   id: number
   name: string
@@ -20,6 +29,10 @@ export interface Npc {
   prompt_type: string
   status: number
   sort: number
+  /** 外部仿真回写 JSON（结构自由） */
+  simulation_meta?: Record<string, unknown> | null
+  /** 关联场景数量（列表视图聚合，后端计算） */
+  scene_count?: number
   created_at: string
   updated_at: string
 }
@@ -40,4 +53,6 @@ export interface CreateNpcForm {
   prompt_type: string
   status: number
   sort: number
+  /** 可选：JSON 字符串或对象，提交时序列化 */
+  simulation_meta?: string | Record<string, unknown> | null
 }

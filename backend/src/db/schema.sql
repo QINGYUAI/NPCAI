@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS npc (
   prompt_type VARCHAR(16) DEFAULT 'high' COMMENT '约束类型：high/low',
   status TINYINT(1) DEFAULT 1 COMMENT '状态 0禁用 1启用',
   sort INT DEFAULT 0 COMMENT '排序',
+  simulation_meta JSON DEFAULT NULL COMMENT '外部仿真回写：记忆/反思等摘要（自由 JSON）',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_ai_config_id (ai_config_id),
@@ -43,6 +44,37 @@ CREATE TABLE IF NOT EXISTS npc (
   INDEX idx_status (status),
   FOREIGN KEY (ai_config_id) REFERENCES ai_config(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色NPC表';
+
+-- 场景表（剧情/空间/情境）
+CREATE TABLE IF NOT EXISTS scene (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+  name VARCHAR(128) NOT NULL COMMENT '场景名称',
+  description TEXT DEFAULT NULL COMMENT '简介',
+  category VARCHAR(32) DEFAULT 'custom' COMMENT '分类 task/plot/custom',
+  tags JSON DEFAULT NULL COMMENT '标签 JSON 数组',
+  background_image VARCHAR(512) DEFAULT NULL COMMENT '2D 沙盒底图 URL（可空）',
+  width INT DEFAULT 800 COMMENT '2D 沙盒逻辑宽度（像素），默认 800',
+  height INT DEFAULT 600 COMMENT '2D 沙盒逻辑高度（像素），默认 600',
+  status TINYINT(1) DEFAULT 1 COMMENT '0禁用 1启用',
+  sort INT DEFAULT 0 COMMENT '排序',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_scene_category (category),
+  INDEX idx_scene_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='场景表';
+
+-- 场景与 NPC 多对多
+CREATE TABLE IF NOT EXISTS scene_npc (
+  scene_id BIGINT NOT NULL COMMENT '场景ID',
+  npc_id BIGINT NOT NULL COMMENT 'NPC ID',
+  role_note VARCHAR(256) DEFAULT NULL COMMENT '本场景中身份/备注',
+  pos_x DOUBLE DEFAULT NULL COMMENT '2D 沙盒 X 坐标（相对底图像素，画布 800x600）',
+  pos_y DOUBLE DEFAULT NULL COMMENT '2D 沙盒 Y 坐标（相对底图像素，画布 800x600）',
+  PRIMARY KEY (scene_id, npc_id),
+  INDEX idx_scene_npc_npc (npc_id),
+  CONSTRAINT fk_scene_npc_scene FOREIGN KEY (scene_id) REFERENCES scene(id) ON DELETE CASCADE,
+  CONSTRAINT fk_scene_npc_npc FOREIGN KEY (npc_id) REFERENCES npc(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='场景与角色关联';
 
 -- AI 接口调用日志表
 CREATE TABLE IF NOT EXISTS ai_call_log (

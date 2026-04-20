@@ -4,13 +4,18 @@
 import { api } from './client.js'
 import type { ApiResponse } from './client.js'
 import { uploadAvatar } from './upload.js'
-import type { Npc, CreateNpcForm } from '../types/npc.js'
+import type { Npc, CreateNpcForm, NpcSceneLink } from '../types/npc.js'
 
 export type { ApiResponse }
 
-/** 获取 NPC 列表 */
-export function getNpcList(params?: { category?: string; status?: number }) {
+/** 获取 NPC 列表（支持按场景 scene_id 筛选） */
+export function getNpcList(params?: { category?: string; status?: number; scene_id?: number }) {
   return api.get<ApiResponse<Npc[]>>('/npc', { params })
+}
+
+/** 某 NPC 所属场景列表 */
+export function getNpcScenes(npcId: number) {
+  return api.get<ApiResponse<NpcSceneLink[]>>(`/npc/${npcId}/scenes`)
 }
 
 /** 获取单个 NPC */

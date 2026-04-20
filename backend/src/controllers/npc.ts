@@ -2,19 +2,30 @@
  * 角色 NPC 控制器
  */
 import { Request, Response } from 'express';
+import type { RowDataPacket } from 'mysql2';
 import { pool } from '../db/connection.js';
 import { chatCompletion } from '../utils/llmClient.js';
 
-/** 获取 NPC 列表，支持筛选 */
+/** 获取 NPC 列表，支持筛选（含按场景 scene_id） */
 export async function getNpcList(req: Request, res: Response) {
   try {
-    const { category, status } = req.query;
+    const { category, status, scene_id } = req.query;
     let sql = `SELECT n.id, n.name, n.description, n.background, n.personality,
       n.gender, n.age, n.occupation, n.voice_tone, n.avatar,
       n.ai_config_id, n.system_prompt, n.category, n.prompt_type, n.status, n.sort,
-      n.created_at, n.updated_at, c.name as ai_config_name, c.provider
-      FROM npc n LEFT JOIN ai_config c ON n.ai_config_id = c.id WHERE 1=1`;
+      n.simulation_meta,
+      n.created_at, n.updated_at, c.name as ai_config_name, c.provider,
+      (SELECT COUNT(*) FROM scene_npc sn2 WHERE sn2.npc_id = n.id) AS scene_count
+      FROM npc n
+      LEFT JOIN ai_config c ON n.ai_config_id = c.id`;
     const params: (string | number)[] = [];
+
+    if (scene_id !== undefined && scene_id !== '') {
+      sql += ' INNER JOIN scene_npc sn ON sn.npc_id = n.id AND sn.scene_id = ?';
+      params.push(Number(scene_id));
+    }
+
+    sql += ' WHERE 1=1';
 
     if (category) {
       sql += ' AND n.category = ?';
@@ -31,6 +42,30 @@ export async function getNpcList(req: Request, res: Response) {
   } catch (err) {
     console.error('getNpcList:', err);
     res.status(500).json({ code: -1, message: '获取列表失败' });
+  }
+}
+
+/** 某 NPC 所属场景列表（含场景中备注 role_note） */
+export async function getNpcScenes(req: Request, res: Response) {
+  try {
+    const { id } = req.params;
+    const [npcRows] = await pool.query<RowDataPacket[]>('SELECT id FROM npc WHERE id = ?', [id]);
+    if (npcRows.length === 0) {
+      return res.status(404).json({ code: -1, message: 'NPC 不存在' });
+    }
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT s.id AS scene_id, s.name AS scene_name, s.category AS scene_category,
+        sn.role_note
+       FROM scene_npc sn
+       INNER JOIN scene s ON s.id = sn.scene_id
+       WHERE sn.npc_id = ?
+       ORDER BY s.id ASC`,
+      [id],
+    );
+    res.json({ code: 0, data: rows });
+  } catch (err) {
+    console.error('getNpcScenes:', err);
+    res.status(500).json({ code: -1, message: '获取场景关联失败' });
   }
 }
 
@@ -59,15 +94,34 @@ export async function getNpcById(req: Request, res: Response) {
 export async function createNpc(req: Request, res: Response) {
   try {
     const body = req.body as Record<string, unknown>;
-    const { name, description, background, personality, gender, age, occupation, voice_tone, avatar, ai_config_id, system_prompt, category, prompt_type, status, sort } = body;
+    const {
+      name,
+      description,
+      background,
+      personality,
+      gender,
+      age,
+      occupation,
+      voice_tone,
+      avatar,
+      ai_config_id,
+      system_prompt,
+      category,
+      prompt_type,
+      status,
+      sort,
+      simulation_meta,
+    } = body;
 
     if (!name || !ai_config_id) {
       return res.status(400).json({ code: -1, message: '角色名称和 AI 配置为必填' });
     }
 
+    const metaVal = normalizeSimulationMetaForDb(simulation_meta);
+
     const [result] = await pool.execute(
-      `INSERT INTO npc (name, description, background, personality, gender, age, occupation, voice_tone, avatar, ai_config_id, system_prompt, category, prompt_type, status, sort)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO npc (name, description, background, personality, gender, age, occupation, voice_tone, avatar, ai_config_id, system_prompt, category, prompt_type, status, sort, simulation_meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         description || null,
@@ -84,6 +138,7 @@ export async function createNpc(req: Request, res: Response) {
         prompt_type || 'high',
         status ?? 1,
         sort ?? 0,
+        metaVal,
       ]
     );
 
@@ -103,12 +158,32 @@ export async function updateNpc(req: Request, res: Response) {
     const updates: string[] = [];
     const params: unknown[] = [];
 
-    const fields = ['name', 'description', 'background', 'personality', 'gender', 'age', 'occupation', 'voice_tone', 'avatar', 'ai_config_id', 'system_prompt', 'category', 'prompt_type', 'status', 'sort'];
+    const fields = [
+      'name',
+      'description',
+      'background',
+      'personality',
+      'gender',
+      'age',
+      'occupation',
+      'voice_tone',
+      'avatar',
+      'ai_config_id',
+      'system_prompt',
+      'category',
+      'prompt_type',
+      'status',
+      'sort',
+    ];
     for (const f of fields) {
       if (body[f] !== undefined) {
         updates.push(`${f} = ?`);
         params.push(body[f]);
       }
+    }
+    if (body.simulation_meta !== undefined) {
+      updates.push('simulation_meta = ?');
+      params.push(normalizeSimulationMetaForDb(body.simulation_meta));
     }
 
     if (updates.length === 0) {
@@ -219,10 +294,41 @@ function parseNpcGenerateJson(text: string): {
   }
 }
 
-/** 删除 NPC */
+/** simulation_meta：对象序列化写入 JSON 列；字符串尝试 JSON.parse；undefined 表示不传 */
+function normalizeSimulationMetaForDb(input: unknown): string | null {
+  if (input === undefined || input === null) return null;
+  if (typeof input === 'string') {
+    const t = input.trim();
+    if (!t) return null;
+    try {
+      JSON.parse(t);
+      return t;
+    } catch {
+      return JSON.stringify({ raw: t });
+    }
+  }
+  try {
+    return JSON.stringify(input);
+  } catch {
+    return null;
+  }
+}
+
+/** 删除 NPC（若仍关联场景则禁止删除） */
 export async function deleteNpc(req: Request, res: Response) {
   try {
     const { id } = req.params;
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT COUNT(*) AS c FROM scene_npc WHERE npc_id = ?',
+      [id],
+    );
+    const cnt = Number((rows as { c: number }[])[0]?.c ?? 0);
+    if (cnt > 0) {
+      return res.status(409).json({
+        code: -1,
+        message: '该角色仍关联场景，请先在「场景」中解除关联后再删除',
+      });
+    }
     const [result] = await pool.execute('DELETE FROM npc WHERE id = ?', [id]);
     const affected = (result as { affectedRows: number }).affectedRows;
     if (affected === 0) {

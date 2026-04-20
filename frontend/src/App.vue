@@ -1,12 +1,25 @@
 <script setup lang="ts">
 /**
- * AINPC 主应用 — 顶层壳：标题区 + 两栏 Tab（AI 配置 / 角色 NPC）
+ * AINPC 主应用 — 顶层壳：Tab（AI 配置 / 角色 NPC / 场景 / 沙盒）
  */
-import { ref } from 'vue'
+import { ref, provide, defineAsyncComponent } from 'vue'
 import ConfigList from './components/ConfigList.vue'
 import NpcList from './components/NpcList.vue'
+import SceneList from './components/SceneList.vue'
+
+/** Phaser 体积较大，懒加载减少首屏 JS */
+const Sandbox = defineAsyncComponent(() => import('./components/Sandbox.vue'))
 
 const activeTab = ref('config')
+
+/** 从 NPC 表单跳转到「场景」Tab 并打开指定场景编辑（M2） */
+const sceneOpenId = ref<number | null>(null)
+function jumpToScene(id: number) {
+  activeTab.value = 'scene'
+  sceneOpenId.value = id
+}
+provide('jumpToScene', jumpToScene)
+provide('sceneOpenId', sceneOpenId)
 </script>
 
 <template>
@@ -20,7 +33,7 @@ const activeTab = ref('config')
         AINPC 管理
       </h1>
       <p class="text-center text-[var(--ainpc-muted)] text-sm mt-2 max-w-[28rem] mx-auto leading-relaxed">
-        管理大模型连接与角色档案；下方切换「AI 配置」与「角色 NPC」。
+        管理大模型连接、角色档案与场景编排；下方切换各模块。
       </p>
     </header>
 
@@ -31,6 +44,12 @@ const activeTab = ref('config')
       </el-tab-pane>
       <el-tab-pane label="角色 NPC" name="npc">
         <NpcList />
+      </el-tab-pane>
+      <el-tab-pane label="场景" name="scene">
+        <SceneList />
+      </el-tab-pane>
+      <el-tab-pane label="沙盒" name="sandbox" lazy>
+        <Sandbox />
       </el-tab-pane>
     </el-tabs>
   </div>

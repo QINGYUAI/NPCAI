@@ -6,7 +6,7 @@
 
 - **前端**: Vue 3 + Vite + TypeScript + Element Plus
 - **后端**: Node.js + Express
-- **数据库**: MySQL（`ai_config`、`npc`；可选 `ai_call_log`）
+- **数据库**: MySQL（`ai_config`、`npc`、`scene`、`scene_npc`；可选 `ai_call_log`）
 
 ## 快速开始
 
@@ -21,7 +21,9 @@ npm run db:init
 ```
 
 若已有旧库但缺少 NPC 扩展字段：`npm run db:migrate-npc-fields`  
-需要 AI 调用日志表时：`npm run db:migrate-ai-log`
+需要 AI 调用日志表时：`npm run db:migrate-ai-log`  
+**场景与 `npc.simulation_meta`（人物-场景编排）**：`npm run db:migrate-scene`  
+> `db:migrate-scene` 已幂等；v0.8 追加 `scene.background_image` 与 `scene_npc.pos_x/pos_y`；v0.9 追加 `scene.width`、`scene.height`（2D 沙盒任意尺寸）。
 
 ### 2. 依赖（根目录一键安装前后端）
 
@@ -40,6 +42,13 @@ npm run dev
 
 也可分别启动：`npm run dev:backend`、`npm run dev:frontend`。
 
+### 测试
+
+```bash
+cd backend && npm test     # 后端：Vitest + Supertest 路由契约测试
+cd frontend && npm test    # 前端：Vitest 纯函数测试（沙盒工具）
+```
+
 ### 4. 仅启动某一端（可选）
 
 ```bash
@@ -52,7 +61,8 @@ cd frontend && npm run dev   # http://localhost:5173
 | 方法 | 路径 | 说明 |
 |-----|------|-----|
 | GET/POST/PUT/DELETE/PATCH | /api/config | AI 配置 |
-| GET/POST/PUT/DELETE | /api/npc | NPC |
+| GET/POST/PUT/DELETE | /api/npc | NPC；列表支持 `?scene_id=`；`GET /api/npc/:id/scenes` 查所属场景 |
+| GET/POST/PUT/DELETE、`PUT /api/scene/:id/npcs`、`PUT /api/scene/:id/layout`、`GET /api/scene/:id/export?format=json\|csv` | /api/scene | 场景、关联、2D 沙盒布局与导出 |
 | POST | /api/upload/avatar | 上传头像 |
 | GET | /api/ai-logs | AI 调用日志 |
 

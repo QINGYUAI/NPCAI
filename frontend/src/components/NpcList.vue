@@ -8,6 +8,8 @@ import { Plus, User } from '@element-plus/icons-vue'
 import { toast } from 'vue3-toastify'
 import type { Npc } from '../types/npc'
 import { getNpcList, deleteNpc } from '../api/npc'
+import { getSceneList } from '../api/scene'
+import type { Scene } from '../types/scene'
 import { NPC_CATEGORIES, NPC_GENDERS } from '../constants/npc'
 import NpcForm from './NpcForm.vue'
 import { resolveAvatarUrl } from '../utils/avatar'
@@ -16,6 +18,9 @@ const list = ref<Npc[]>([])
 const loading = ref(false)
 const filterCategory = ref('')
 const filterStatus = ref<number | ''>('')
+/** 按场景筛选（仅显示关联到该场景的角色） */
+const filterSceneId = ref<number | ''>('')
+const sceneOptions = ref<Pick<Scene, 'id' | 'name'>[]>([])
 const formVisible = ref(false)
 const editId = ref<number | null>(null)
 
@@ -25,6 +30,7 @@ async function loadList() {
     const { data } = await getNpcList({
       category: filterCategory.value || undefined,
       status: filterStatus.value === '' ? undefined : filterStatus.value,
+      scene_id: filterSceneId.value === '' ? undefined : Number(filterSceneId.value),
     })
     if (data.code === 0 && data.data) {
       list.value = data.data
@@ -63,13 +69,17 @@ async function handleDelete(item: Npc) {
     } else {
       toast.error(data.message || '删除失败')
     }
-  } catch (e) {
-    if (e !== 'cancel') toast.error('删除失败')
+  } catch (e: unknown) {
+    if (e === 'cancel') return
+    const msg =
+      (e as { response?: { data?: { message?: string } } })?.response?.data?.message || '删除失败'
+    toast.error(msg)
   }
 }
 
 function onFormSuccess() {
   formVisible.value = false
+  loadSceneOptions()
   loadList()
   toast.success('保存成功')
 }
@@ -80,7 +90,21 @@ function formatAge(val: string | null | undefined): string {
   return /^\d+$/.test(String(val)) ? `${val}岁` : val
 }
 
-onMounted(loadList)
+async function loadSceneOptions() {
+  try {
+    const { data } = await getSceneList({ page: 1, pageSize: 500 })
+    if (data.code === 0 && data.data?.list) {
+      sceneOptions.value = data.data.list.map((s) => ({ id: s.id, name: s.name }))
+    }
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+onMounted(() => {
+  loadSceneOptions()
+  loadList()
+})
 </script>
 
 <template>
@@ -100,6 +124,10 @@ onMounted(loadList)
         <el-select v-model="filterStatus" placeholder="全部状态" clearable size="default" class="!w-28">
           <el-option label="启用" :value="1" />
           <el-option label="禁用" :value="0" />
+        </el-select>
+        <el-select v-model="filterSceneId" placeholder="全部场景" clearable filterable size="default"
+          class="!min-w-[10rem] max-w-[14rem]">
+          <el-option v-for="s in sceneOptions" :key="s.id" :label="s.name" :value="s.id" />
         </el-select>
         <el-button size="default" @click="loadList">刷新</el-button>
       </div>
@@ -156,6 +184,10 @@ onMounted(loadList)
           </dl>
           <p v-if="item.personality" class="text-xs text-[var(--ainpc-muted)] mb-3 line-clamp-1">
             性格：{{ item.personality }}
+          </p>
+          <p class="text-xs text-[var(--ainpc-muted)] mb-3">
+            所属场景：
+            <span class="text-[#c9d1d9]">{{ item.scene_count ?? 0 }}</span> 个
           </p>
           <div class="flex flex-wrap gap-2 pt-3 border-t border-[var(--ainpc-border)]">
             <el-button size="small" @click="openEdit(item)">编辑</el-button>

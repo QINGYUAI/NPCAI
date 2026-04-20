@@ -2,10 +2,10 @@
 /**
  * 角色 NPC 表单组件（新增/编辑）
  */
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted, computed, inject } from 'vue'
 import { toast } from 'vue3-toastify'
-import type { Npc, CreateNpcForm } from '../types/npc'
-import { getNpcById, createNpc, updateNpc, generateNpcContent, uploadAvatar } from '../api/npc'
+import type { Npc, CreateNpcForm, NpcSceneLink } from '../types/npc'
+import { getNpcById, createNpc, updateNpc, generateNpcContent, uploadAvatar, getNpcScenes } from '../api/npc'
 import { getConfigList } from '../api/config'
 import type { AiConfig } from '../types/config'
 import { NPC_CATEGORIES, NPC_PROMPT_TYPES, NPC_GENDERS } from '../constants/npc'
@@ -20,10 +20,17 @@ const emit = defineEmits<{
   success: []
 }>()
 
+/** 跳转「场景」Tab 并打开编辑（由 App.vue provide） */
+const jumpToScene = inject<(id: number) => void>('jumpToScene')
+/** 编辑模式下：该 NPC 已关联的场景 */
+const npcScenes = ref<NpcSceneLink[]>([])
+
 const loading = ref(false)
 const generateLoading = ref(false)
 const avatarUploading = ref(false)
 const generateHint = ref('')
+/** 高级：外部仿真回写 JSON（自由结构） */
+const simulationMetaStr = ref('')
 const aiConfigList = ref<AiConfig[]>([])
 const form = ref<CreateNpcForm>({
   name: '',
@@ -80,9 +87,30 @@ async function loadDetail() {
         status: d.status,
         sort: d.sort,
       }
+      if (d.simulation_meta != null && typeof d.simulation_meta === 'object') {
+        simulationMetaStr.value = JSON.stringify(d.simulation_meta, null, 2)
+      } else {
+        simulationMetaStr.value = ''
+      }
+      await loadNpcScenes()
     }
   } catch (e) {
     console.error(e)
+  }
+}
+
+async function loadNpcScenes() {
+  if (!props.id) {
+    npcScenes.value = []
+    return
+  }
+  try {
+    const { data } = await getNpcScenes(props.id)
+    if (data.code === 0 && data.data) npcScenes.value = data.data
+    else npcScenes.value = []
+  } catch (e) {
+    console.error(e)
+    npcScenes.value = []
   }
 }
 
@@ -114,6 +142,8 @@ function resetForm() {
     sort: 0,
   }
   generateHint.value = ''
+  simulationMetaStr.value = ''
+  npcScenes.value = []
 }
 
 /** AI 自动生成角色内容（简介、背景、性格、系统提示词） */
@@ -168,11 +198,24 @@ async function submit() {
 
   loading.value = true
   try {
-    const payload = { ...form.value }
+    const metaRaw = simulationMetaStr.value.trim()
+    let simulation_meta: string | Record<string, unknown> | null = null
+    if (metaRaw) {
+      try {
+        simulation_meta = JSON.parse(metaRaw) as Record<string, unknown>
+      } catch {
+        simulation_meta = metaRaw
+      }
+    }
+    const payload: Partial<CreateNpcForm> & { simulation_meta?: string | Record<string, unknown> | null } = {
+      ...form.value,
+      simulation_meta,
+    }
 
     if (props.id) {
       const { data } = await updateNpc(props.id, payload)
       if (data.code === 0) {
+        await loadNpcScenes()
         emit('success')
       } else {
         toast.error(data.message || '更新失败')
@@ -350,6 +393,37 @@ onMounted(loadAiConfigs)
           </el-form-item>
         </el-col>
       </el-row>
+
+      <template v-if="id">
+        <el-divider content-position="left">所属场景</el-divider>
+        <p v-if="npcScenes.length === 0" class="text-xs text-[var(--ainpc-muted)] mb-3 leading-relaxed">
+          暂无关联场景。请在「场景」Tab 中编辑对应场景，并在「关联角色」中添加本角色。
+        </p>
+        <ul v-else class="space-y-2 mb-4 pl-0 list-none">
+          <li v-for="s in npcScenes" :key="s.scene_id"
+            class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm border border-[var(--ainpc-border)] rounded-lg px-3 py-2 bg-[rgba(13,17,23,0.4)]">
+            <span class="text-[#f0f6fc] font-medium">{{ s.scene_name }}</span>
+            <el-tag v-if="s.scene_category" size="small" type="info">
+              {{NPC_CATEGORIES.find((c) => c.value === s.scene_category)?.label || s.scene_category}}
+            </el-tag>
+            <span v-if="s.role_note" class="text-xs text-[var(--ainpc-muted)]">备注：{{ s.role_note }}</span>
+            <el-button v-if="jumpToScene" type="primary" link size="small" class="ml-auto"
+              @click="jumpToScene(s.scene_id)">
+              去场景编辑
+            </el-button>
+          </li>
+        </ul>
+      </template>
+
+      <el-collapse class="ainpc-collapse mt-2">
+        <el-collapse-item title="高级：仿真回写 JSON（simulation_meta）" name="meta">
+          <p class="text-xs text-[var(--ainpc-muted)] mb-2 leading-relaxed">
+            供外部仿真引擎回写记忆/反思等摘要；合法 JSON 即可，可为对象或留空。
+          </p>
+          <el-input v-model="simulationMetaStr" type="textarea" :rows="6" placeholder='例如：{"note":"由运行时写入"}'
+            class="font-mono text-sm" />
+        </el-collapse-item>
+      </el-collapse>
     </el-form>
     <template #footer>
       <div class="flex justify-end gap-2">

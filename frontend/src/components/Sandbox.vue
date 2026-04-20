@@ -1,0 +1,709 @@
+<script setup lang="ts">
+/**
+ * 2D 沙盒（Phaser 3）— 场景布局 MVP
+ * - 选择场景 → 加载底图与关联 NPC
+ * - 将 NPC 以圆形节点渲染到画布，可拖拽调整位置
+ * - 点击「保存布局」写入 scene_npc.pos_x/pos_y
+ */
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { toast } from 'vue3-toastify'
+import * as Phaser from 'phaser'
+import { getSceneList, getSceneById, updateSceneLayout } from '../api/scene'
+import type { Scene, SceneDetail, SceneNpcLink } from '../types/scene'
+import { NPC_CATEGORIES } from '../constants/npc'
+import { resolveAvatarUrl } from '../utils/avatar'
+import {
+  categoryCss,
+  clamp,
+  colorOfCategory,
+  extractBubbleText,
+  fallbackPosition,
+} from '../utils/sandbox'
+
+/** 画布视口尺寸（DOM 像素，Phaser Game 的 width/height） */
+const VIEWPORT_W = 800
+const VIEWPORT_H = 600
+/** NPC 节点半径（世界坐标） */
+const NODE_R = 26
+/** 缩放范围 */
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 2.5
+
+/** 顶层状态 */
+const scenes = ref<Scene[]>([])
+const activeSceneId = ref<number | null>(null)
+const detail = ref<SceneDetail | null>(null)
+const loading = ref(false)
+const dirty = ref(false)
+const saving = ref(false)
+
+/** 状态气泡（M3.2）：轮询 simulation_meta.latest_say / latest_action */
+const bubbleEnabled = ref(false)
+const bubbleIntervalMs = ref(5000)
+let bubbleTimer: ReturnType<typeof setInterval> | null = null
+
+/** Phaser 实例（shallowRef：避免 Vue 代理干扰 Phaser 内部对象） */
+const gameRef = shallowRef<Phaser.Game | null>(null)
+const sceneRef = shallowRef<Phaser.Scene | null>(null)
+/** 当前节点坐标缓存：npc_id → {x,y} */
+const positionCache = shallowRef<Map<number, { x: number; y: number }>>(new Map())
+const containerEl = ref<HTMLDivElement | null>(null)
+
+const activeScene = computed<Scene | null>(
+  () => scenes.value.find((s) => s.id === activeSceneId.value) ?? null,
+)
+
+/** 读取场景列表（只要启用态） */
+async function loadScenes() {
+  try {
+    const { data } = await getSceneList({ status: 1, pageSize: 100 })
+    if (data.code === 0 && data.data) {
+      scenes.value = data.data.list
+      const first = scenes.value[0]
+      if (!activeSceneId.value && first) {
+        activeSceneId.value = first.id
+      }
+    }
+  } catch (e) {
+    console.error(e)
+    toast.error('加载场景列表失败')
+  }
+}
+
+/** 从场景详情读取尺寸；缺省 800x600 */
+function worldSize(d: SceneDetail | null): { w: number; h: number } {
+  const w = typeof d?.width === 'number' && d.width >= 200 ? d.width : 800
+  const h = typeof d?.height === 'number' && d.height >= 200 ? d.height : 600
+  return { w, h }
+}
+
+/** 销毁当前 Phaser 实例（切换场景或卸载组件时） */
+function destroyGame() {
+  if (gameRef.value) {
+    gameRef.value.destroy(true)
+    gameRef.value = null
+    sceneRef.value = null
+  }
+  positionCache.value = new Map()
+  nodeHandles.value = new Map()
+}
+
+/** 在指定节点上方渲染/更新气泡；空文本则移除气泡 */
+function renderBubble(scene: Phaser.Scene, handle: NodeHandle, text: string) {
+  if (!text) {
+    if (handle.bubble) {
+      handle.bubble.destroy(true)
+      handle.bubble = null
+    }
+    return
+  }
+  if (handle.bubble) handle.bubble.destroy(true)
+
+  const maxWidth = 180
+  const label = scene.add.text(0, 0, text, {
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    fontSize: '12px',
+    color: '#0d1117',
+    backgroundColor: '#e6edf3',
+    padding: { x: 6, y: 4 },
+    wordWrap: { width: maxWidth, useAdvancedWrap: true },
+    align: 'center',
+  })
+  label.setOrigin(0.5, 1)
+  label.setPosition(0, -NODE_R - 6)
+
+  const bubble = scene.add.container(0, 0, [label])
+  bubble.setDepth(20)
+  handle.container.add(bubble)
+  handle.bubble = bubble
+}
+
+/** 刷新所有节点气泡（基于最新 detail.npcs 的 simulation_meta） */
+function refreshBubbles() {
+  if (!detail.value || !sceneRef.value) return
+  const scene = sceneRef.value
+  for (const n of detail.value.npcs) {
+    const h = nodeHandles.value.get(n.npc_id)
+    if (!h) continue
+    const text = bubbleEnabled.value ? extractBubbleText(n.simulation_meta) : ''
+    renderBubble(scene, h, text)
+  }
+}
+
+/** 轮询：重新拉取场景详情，只更新 simulation_meta 并刷新气泡（不动节点位置） */
+async function pollStatus() {
+  if (!activeSceneId.value || !detail.value) return
+  try {
+    const { data } = await getSceneById(activeSceneId.value)
+    if (data.code === 0 && data.data) {
+      const fresh = data.data
+      /** 就地合并 simulation_meta，保留用户未保存的拖拽坐标 */
+      const metaMap = new Map<number, Record<string, unknown> | null | undefined>()
+      for (const n of fresh.npcs) metaMap.set(n.npc_id, n.simulation_meta)
+      detail.value = {
+        ...detail.value,
+        npcs: detail.value.npcs.map((n) => ({
+          ...n,
+          simulation_meta: metaMap.get(n.npc_id) ?? n.simulation_meta ?? null,
+        })),
+      }
+      refreshBubbles()
+    }
+  } catch (e) {
+    console.warn('[Sandbox] pollStatus failed:', e)
+  }
+}
+
+function startBubbleTimer() {
+  stopBubbleTimer()
+  if (!bubbleEnabled.value) return
+  /** 立即拉一次，后续按间隔轮询 */
+  pollStatus()
+  bubbleTimer = setInterval(pollStatus, Math.max(1000, bubbleIntervalMs.value))
+}
+
+function stopBubbleTimer() {
+  if (bubbleTimer) {
+    clearInterval(bubbleTimer)
+    bubbleTimer = null
+  }
+}
+
+watch(bubbleEnabled, (on) => {
+  if (on) {
+    startBubbleTimer()
+  } else {
+    stopBubbleTimer()
+    refreshBubbles()
+  }
+})
+
+watch(bubbleIntervalMs, () => {
+  if (bubbleEnabled.value) startBubbleTimer()
+})
+
+/** 画布容器的 CSS 尺寸（视口固定；内部通过相机显示 world） */
+const canvasWrapStyle = computed(() => ({
+  width: VIEWPORT_W + 'px',
+  height: VIEWPORT_H + 'px',
+}))
+
+/** 当前 world 尺寸（随场景变化） */
+const worldW = ref(800)
+const worldH = ref(600)
+const zoomLevel = ref(1)
+
+/** 创建 Phaser Game 并加载当前 detail */
+function createGame(d: SceneDetail) {
+  if (!containerEl.value) return
+  destroyGame()
+
+  const ws = worldSize(d)
+  worldW.value = ws.w
+  worldH.value = ws.h
+
+  /** 使用闭包内的自定义 Scene：保持 Phaser 生命周期内访问 Vue 数据 */
+  class SandboxScene extends Phaser.Scene {
+    constructor() {
+      super('sandbox')
+    }
+
+    preload() {
+      /** 允许远程图片作为纹理（需服务端 CORS 支持；失败会进入 loaderror） */
+      this.load.crossOrigin = 'anonymous'
+      if (d.background_image) {
+        this.load.image('bg', d.background_image)
+      }
+      for (const n of d.npcs ?? []) {
+        if (n.npc_avatar) {
+          const url = resolveAvatarUrl(n.npc_avatar)
+          if (url) this.load.image(avatarKey(n.npc_id), url)
+        }
+      }
+      this.load.on('loaderror', (file: Phaser.Loader.File) => {
+        console.warn('[Sandbox] 资源加载失败:', file.key, file.src)
+      })
+    }
+
+    create() {
+      sceneRef.value = this
+      const W = ws.w
+      const H = ws.h
+
+      /** 背景层 */
+      if (d.background_image && this.textures.exists('bg')) {
+        const bg = this.add.image(W / 2, H / 2, 'bg')
+        const scale = Math.max(W / bg.width, H / bg.height)
+        bg.setScale(scale).setDepth(0)
+      } else {
+        const g = this.add.graphics()
+        g.fillStyle(0x0d1117, 1)
+        g.fillRect(0, 0, W, H)
+        g.lineStyle(1, 0x30363d, 0.6)
+        for (let x = 0; x <= W; x += 40) {
+          g.beginPath()
+          g.moveTo(x, 0)
+          g.lineTo(x, H)
+          g.strokePath()
+        }
+        for (let y = 0; y <= H; y += 40) {
+          g.beginPath()
+          g.moveTo(0, y)
+          g.lineTo(W, y)
+          g.strokePath()
+        }
+        g.setDepth(0)
+      }
+
+      /** 世界边界提示 */
+      const border = this.add.graphics()
+      border.lineStyle(1, 0x58a6ff, 0.6)
+      border.strokeRect(0.5, 0.5, W - 1, H - 1)
+      border.setDepth(100)
+
+      /** 绘制 NPC 节点 */
+      const npcs = d.npcs ?? []
+      const cache = new Map<number, { x: number; y: number }>()
+      const handles = new Map<number, NodeHandle>()
+      npcs.forEach((n, idx) => {
+        let x: number
+        let y: number
+        if (typeof n.pos_x === 'number' && typeof n.pos_y === 'number') {
+          x = clamp(Number(n.pos_x), NODE_R, W - NODE_R)
+          y = clamp(Number(n.pos_y), NODE_R, H - NODE_R)
+        } else {
+          const fb = fallbackPosition(idx, npcs.length, W, H)
+          x = fb.x
+          y = fb.y
+        }
+        cache.set(n.npc_id, { x, y })
+        const h = createNpcNode(this, n, x, y, W, H)
+        handles.set(n.npc_id, h)
+      })
+      positionCache.value = cache
+      nodeHandles.value = handles
+
+      /** 相机：world bounds + 初始 fit */
+      const cam = this.cameras.main
+      cam.setBounds(0, 0, W, H)
+      const fitZoom = Math.min(VIEWPORT_W / W, VIEWPORT_H / H, 1)
+      cam.setZoom(Math.max(MIN_ZOOM, fitZoom))
+      zoomLevel.value = cam.zoom
+      cam.centerOn(W / 2, H / 2)
+
+      /** 滚轮缩放（以鼠标位置为缩放中心） */
+      this.input.on(
+        'wheel',
+        (
+          _pointer: Phaser.Input.Pointer,
+          _over: unknown,
+          _dx: number,
+          dy: number,
+        ) => {
+          const next = clamp(cam.zoom * (dy > 0 ? 0.9 : 1.1), MIN_ZOOM, MAX_ZOOM)
+          cam.setZoom(next)
+          zoomLevel.value = next
+        },
+      )
+
+      /** 右键/中键拖拽 pan：空白处拖拽平移 */
+      this.input.on(
+        'pointermove',
+        (pointer: Phaser.Input.Pointer) => {
+          if (!pointer.isDown) return
+          const rightOrMiddle = pointer.rightButtonDown() || pointer.buttons === 4
+          if (rightOrMiddle) {
+            cam.scrollX -= (pointer.x - pointer.prevPosition.x) / cam.zoom
+            cam.scrollY -= (pointer.y - pointer.prevPosition.y) / cam.zoom
+          }
+        },
+      )
+
+      /** 场景重建后：若气泡开启，立刻渲染一次当前 meta */
+      if (bubbleEnabled.value) refreshBubbles()
+    }
+  }
+
+  const game = new Phaser.Game({
+    type: Phaser.AUTO,
+    parent: containerEl.value,
+    width: VIEWPORT_W,
+    height: VIEWPORT_H,
+    backgroundColor: '#0d1117',
+    scene: SandboxScene,
+    audio: { noAudio: true },
+    disableContextMenu: true,
+  })
+  gameRef.value = game
+}
+
+/** 缩放控制：外部按钮调用 */
+function setZoom(z: number) {
+  const cam = sceneRef.value?.cameras.main
+  if (!cam) return
+  const clamped = clamp(z, MIN_ZOOM, MAX_ZOOM)
+  cam.setZoom(clamped)
+  zoomLevel.value = clamped
+}
+function zoomIn() {
+  setZoom((zoomLevel.value || 1) * 1.2)
+}
+function zoomOut() {
+  setZoom((zoomLevel.value || 1) / 1.2)
+}
+function zoomFit() {
+  const cam = sceneRef.value?.cameras.main
+  if (!cam) return
+  const z = Math.min(VIEWPORT_W / worldW.value, VIEWPORT_H / worldH.value, 1)
+  setZoom(Math.max(MIN_ZOOM, z))
+  cam.centerOn(worldW.value / 2, worldH.value / 2)
+}
+
+/** Phaser 头像纹理 key */
+function avatarKey(npcId: number) {
+  return `avatar-${npcId}`
+}
+
+/** 节点句柄：挂在 container.data 上，便于后续气泡刷新与重绘 */
+interface NodeHandle {
+  container: Phaser.GameObjects.Container
+  bubble: Phaser.GameObjects.Container | null
+  /** avatar 图像的几何遮罩（需跟随容器移动） */
+  maskShape: Phaser.GameObjects.Graphics | null
+}
+
+/** 每次 createGame 重建一次：npc_id → NodeHandle */
+const nodeHandles = shallowRef<Map<number, NodeHandle>>(new Map())
+
+/** 为单个 NPC 生成可拖拽的节点：头像优先、失败回退首字母 */
+function createNpcNode(
+  scene: Phaser.Scene,
+  npc: SceneNpcLink,
+  x: number,
+  y: number,
+  W: number,
+  H: number,
+): NodeHandle {
+  const color = colorOfCategory(npc.npc_category)
+  const key = avatarKey(npc.npc_id)
+  const hasAvatar = !!npc.npc_avatar && scene.textures.exists(key)
+
+  const container = scene.add.container(x, y)
+  container.setDepth(10)
+
+  /** 背景圆（分类色） */
+  const bg = scene.add.circle(0, 0, NODE_R, color, 0.9)
+  bg.setStrokeStyle(2, 0xffffff, 0.9)
+  container.add(bg)
+
+  /** 头像图像（圆形遮罩）或首字母降级 */
+  let maskShape: Phaser.GameObjects.Graphics | null = null
+  if (hasAvatar) {
+    const img = scene.add.image(0, 0, key)
+    /** cover 到节点内切圆（取图像短边等比缩放到直径） */
+    const imgD = NODE_R * 2 - 4
+    const ratio = Math.max(imgD / img.width, imgD / img.height)
+    img.setScale(ratio)
+    img.setOrigin(0.5)
+    /** 用独立 Graphics 作几何遮罩；遮罩内容画在 (0,0)，通过自身 x/y 跟随容器 */
+    maskShape = scene.make.graphics({}, false)
+    maskShape.fillStyle(0xffffff, 1)
+    maskShape.fillCircle(0, 0, NODE_R - 2)
+    maskShape.x = x
+    maskShape.y = y
+    img.setMask(maskShape.createGeometryMask())
+    container.add(img)
+  } else {
+    const initial = (npc.npc_name || '?').charAt(0).toUpperCase()
+    const text = scene.add.text(0, 0, initial, {
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      fontSize: '18px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+    })
+    text.setOrigin(0.5)
+    container.add(text)
+  }
+
+  /** 姓名标签（容器下方） */
+  const nameLabel = scene.add.text(0, NODE_R + 6, npc.npc_name || '未命名', {
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    fontSize: '12px',
+    color: '#f0f6fc',
+    backgroundColor: 'rgba(13,17,23,0.7)',
+    padding: { x: 4, y: 2 },
+  })
+  nameLabel.setOrigin(0.5, 0)
+  container.add(nameLabel)
+
+  /** 交互（圆形命中） */
+  container.setSize(NODE_R * 2, NODE_R * 2)
+  container.setInteractive(
+    new Phaser.Geom.Circle(0, 0, NODE_R),
+    Phaser.Geom.Circle.Contains,
+  )
+  scene.input.setDraggable(container)
+
+  container.on('pointerover', () => bg.setStrokeStyle(3, 0xffffff, 1))
+  container.on('pointerout', () => bg.setStrokeStyle(2, 0xffffff, 0.9))
+
+  container.on(
+    'drag',
+    (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+      const nx = clamp(dragX, NODE_R, W - NODE_R)
+      const ny = clamp(dragY, NODE_R, H - NODE_R)
+      container.x = nx
+      container.y = ny
+      /** 同步遮罩位置（世界坐标），保证头像圆形裁剪跟随节点 */
+      if (maskShape) {
+        maskShape.x = nx
+        maskShape.y = ny
+      }
+      const map = new Map(positionCache.value)
+      map.set(npc.npc_id, { x: nx, y: ny })
+      positionCache.value = map
+      dirty.value = true
+    },
+  )
+
+  return { container, bubble: null, maskShape }
+}
+
+/** 重置为后端保存的坐标（撤销未保存的拖动） */
+function resetLayout() {
+  if (!detail.value) return
+  createGame(detail.value)
+  dirty.value = false
+}
+
+/** 将所有节点按网格重新排布（批量初始化辅助） */
+function autoArrange() {
+  if (!detail.value) return
+  const npcs = detail.value.npcs ?? []
+  const ws = worldSize(detail.value)
+  const cloned: SceneDetail = {
+    ...detail.value,
+    npcs: npcs.map((n, idx) => {
+      const fb = fallbackPosition(idx, npcs.length, ws.w, ws.h)
+      return { ...n, pos_x: fb.x, pos_y: fb.y }
+    }),
+  }
+  detail.value = cloned
+  createGame(cloned)
+  dirty.value = true
+}
+
+/** 保存布局 */
+async function saveLayout() {
+  if (!detail.value || !activeSceneId.value) return
+  const positions = Array.from(positionCache.value.entries()).map(([npc_id, p]) => ({
+    npc_id,
+    pos_x: p.x,
+    pos_y: p.y,
+  }))
+  if (positions.length === 0) {
+    toast.info('当前场景没有关联角色，请先在「场景」Tab 关联')
+    return
+  }
+  saving.value = true
+  try {
+    const { data } = await updateSceneLayout(activeSceneId.value, positions)
+    if (data.code === 0) {
+      toast.success('布局已保存')
+      dirty.value = false
+      /** 更新 detail 中的坐标，避免下次切换回来仍是旧值 */
+      if (detail.value) {
+        detail.value = {
+          ...detail.value,
+          npcs: detail.value.npcs.map((n) => {
+            const p = positionCache.value.get(n.npc_id)
+            return p ? { ...n, pos_x: p.x, pos_y: p.y } : n
+          }),
+        }
+      }
+    } else {
+      toast.error(data.message || '保存失败')
+    }
+  } catch (e) {
+    console.error(e)
+    toast.error('保存失败，请稍后重试')
+  } finally {
+    saving.value = false
+  }
+}
+
+/** 加载指定场景详情并创建画布 */
+async function loadSceneDetail(id: number) {
+  loading.value = true
+  dirty.value = false
+  try {
+    const { data } = await getSceneById(id)
+    if (data.code === 0 && data.data) {
+      detail.value = data.data
+      createGame(data.data)
+    } else {
+      toast.error(data.message || '加载失败')
+    }
+  } catch (e) {
+    console.error(e)
+    toast.error('加载场景详情失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(activeSceneId, (id) => {
+  if (id) loadSceneDetail(id)
+  else destroyGame()
+})
+
+onMounted(async () => {
+  await loadScenes()
+  if (activeSceneId.value) await loadSceneDetail(activeSceneId.value)
+})
+
+onBeforeUnmount(() => {
+  stopBubbleTimer()
+  destroyGame()
+})
+
+function categoryLabel(v: string | null | undefined) {
+  return NPC_CATEGORIES.find((c) => c.value === v)?.label || v || '—'
+}
+</script>
+
+<template>
+  <div>
+    <section class="flex flex-wrap items-center gap-3 mb-4">
+      <div class="flex items-center gap-2">
+        <span class="text-sm text-[var(--ainpc-muted)]">场景</span>
+        <el-select v-model="activeSceneId" placeholder="选择场景" filterable class="w-60" :disabled="loading">
+          <el-option v-for="s in scenes" :key="s.id" :label="s.name" :value="s.id" />
+        </el-select>
+        <el-button :disabled="loading" @click="loadScenes">刷新场景</el-button>
+      </div>
+      <div class="flex items-center gap-2">
+        <el-tooltip content="从 NPC.simulation_meta 读取 latest_say / latest_action 显示气泡" placement="top">
+          <el-switch v-model="bubbleEnabled" active-text="状态气泡" inline-prompt />
+        </el-tooltip>
+        <el-select v-if="bubbleEnabled" v-model="bubbleIntervalMs" size="small" class="w-28">
+          <el-option label="2 秒" :value="2000" />
+          <el-option label="5 秒" :value="5000" />
+          <el-option label="10 秒" :value="10000" />
+          <el-option label="30 秒" :value="30000" />
+        </el-select>
+      </div>
+      <div class="flex-1" />
+      <div class="flex items-center gap-2">
+        <el-button-group>
+          <el-tooltip content="缩小" placement="top">
+            <el-button :disabled="!detail || loading" @click="zoomOut">−</el-button>
+          </el-tooltip>
+          <el-tooltip content="适配" placement="top">
+            <el-button :disabled="!detail || loading" @click="zoomFit">
+              {{ Math.round(zoomLevel * 100) }}%
+            </el-button>
+          </el-tooltip>
+          <el-tooltip content="放大" placement="top">
+            <el-button :disabled="!detail || loading" @click="zoomIn">+</el-button>
+          </el-tooltip>
+        </el-button-group>
+        <el-tag v-if="dirty" type="warning" size="small">未保存</el-tag>
+        <el-button :disabled="!detail || loading" @click="autoArrange">网格排布</el-button>
+        <el-button :disabled="!detail || !dirty || loading" @click="resetLayout">撤销</el-button>
+        <el-button type="primary" :loading="saving" :disabled="!detail || !dirty" @click="saveLayout">
+          保存布局
+        </el-button>
+      </div>
+    </section>
+
+    <el-empty v-if="!loading && scenes.length === 0" description="尚无启用状态的场景，请先在「场景」Tab 创建" />
+
+    <div v-else class="flex flex-col lg:flex-row gap-4">
+      <div class="sandbox-canvas-wrap" :style="canvasWrapStyle">
+        <div ref="containerEl" class="sandbox-canvas" />
+        <el-skeleton v-if="loading" :rows="8" animated class="sandbox-skeleton" />
+      </div>
+
+      <aside class="sandbox-aside flex-1 min-w-0">
+        <h3 class="text-sm font-semibold text-[#f0f6fc] mb-2">
+          {{ activeScene?.name || '—' }}
+          <el-tag v-if="activeScene" size="small" type="info" class="ml-1">
+            {{ categoryLabel(activeScene.category) }}
+          </el-tag>
+        </h3>
+        <p v-if="activeScene?.description" class="text-xs text-[var(--ainpc-muted)] mb-3 leading-relaxed">
+          {{ activeScene.description }}
+        </p>
+        <p v-if="activeScene?.background_image" class="text-xs text-[var(--ainpc-muted)] mb-3 truncate">
+          底图：<span class="text-[#79c0ff]">{{ activeScene.background_image }}</span>
+        </p>
+        <p v-else class="text-xs text-[var(--ainpc-muted)] mb-3">
+          未设置底图（使用网格），可在「场景」Tab 的表单里配置
+        </p>
+
+        <el-divider content-position="left">关联角色（{{ detail?.npcs.length ?? 0 }}）</el-divider>
+        <el-empty v-if="!detail || detail.npcs.length === 0" :image-size="50"
+          description="请先在「场景」Tab 为该场景添加角色" />
+        <ul v-else class="space-y-1 text-xs max-h-[320px] overflow-auto pr-1">
+          <li v-for="n in detail.npcs" :key="n.npc_id"
+            class="flex items-center gap-2 py-1 border-b border-[var(--ainpc-border)] last:border-none">
+            <span class="sandbox-dot" :style="{ background: categoryCss(n.npc_category) }" />
+            <span class="font-medium text-[#f0f6fc]">{{ n.npc_name }}</span>
+            <span v-if="n.role_note" class="text-[var(--ainpc-muted)] truncate">（{{ n.role_note }}）</span>
+            <span class="ml-auto text-[var(--ainpc-muted)] font-mono-nums">
+              {{ n.pos_x != null ? Math.round(Number(n.pos_x)) : '—' }},
+              {{ n.pos_y != null ? Math.round(Number(n.pos_y)) : '—' }}
+            </span>
+          </li>
+        </ul>
+      </aside>
+    </div>
+
+    <p class="text-xs text-[var(--ainpc-muted)] mt-4">
+      交互：<strong>左键</strong>拖拽节点 / <strong>滚轮</strong>缩放 / <strong>右键</strong>拖拽空白处平移；点击「保存布局」将坐标写入
+      <code>scene_npc.pos_x / pos_y</code>。视口 {{ VIEWPORT_W }}×{{ VIEWPORT_H }}；当前世界 {{ worldW }}×{{ worldH }}。
+    </p>
+  </div>
+</template>
+
+<style scoped>
+.sandbox-canvas-wrap {
+  position: relative;
+  border: 1px solid var(--ainpc-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0d1117;
+  flex-shrink: 0;
+}
+
+.sandbox-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.sandbox-skeleton {
+  position: absolute;
+  inset: 0;
+  padding: 1rem;
+}
+
+.sandbox-aside {
+  border: 1px solid var(--ainpc-border);
+  border-radius: 8px;
+  padding: 1rem;
+  background: rgba(13, 17, 23, 0.55);
+}
+
+.sandbox-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.font-mono-nums {
+  font-variant-numeric: tabular-nums;
+}
+</style>
