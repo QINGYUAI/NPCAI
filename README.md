@@ -67,7 +67,7 @@ cd frontend && npm run dev   # http://localhost:5173
 | POST | /api/upload/avatar | 上传头像（2MB） |
 | POST | /api/upload/image | 上传通用图片（8MB，沙盒底图等） |
 | GET | /api/ai-logs | AI 调用日志 |
-| POST | /api/engine/start | 启动场景 tick（M4.1.a，仅 dry_run 可用） |
+| POST | /api/engine/start | 启动场景 tick（M4.1.b 起 dry_run / live 均可用） |
 | POST | /api/engine/stop | 停止场景 tick |
 | POST | /api/engine/step | 手动单步 tick |
 | GET | /api/engine/status?scene_id= | 引擎状态 |

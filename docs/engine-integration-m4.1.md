@@ -4,6 +4,7 @@
 |---------|------|------|
 | 0.1 | 2026-04-20 | 初稿：承接 `docs/engine-selection.md`（C1+C2 推荐方案）的**工程落地规格**，可直接作为 M4.1 立项输入；**待评审** |
 | 0.2 | 2026-04-20 | **M4.1.a 已落地**：`src/engine/` 骨架、`/api/engine/*` 五个接口（start/stop/step/status/ticks）、`npc_tick_log` 表 + 幂等迁移、`ENGINE_*` 环境变量、dry_run 全链路跑通、9 条单测绿 |
+| 0.3 | 2026-04-20 | **M4.1.c + M4.1.b 已落地**：前端沙盒引擎控制条（▶/⏭/⏸、dry_run、速率）；真 LLM 推理图 plan→speak→memory（轻量路线 zod + 手写线性图，未引入 LangGraph.js），单节点重试 1 次→降级；新增 6 条 graph 单测；后端累计 26 条全绿 |
 
 > 关联：选型依据见 [`engine-selection.md`](./engine-selection.md)；字段与里程碑见 [`requirements-character-scene.md`](./requirements-character-scene.md)。
 > **本文档只定义工程规格，不修改现有 M1~M3.3 已交付代码。**
@@ -387,7 +388,7 @@ curl -X POST localhost:3000/api/engine/start \
 | 代码 | 任务 | 状态 | 预估 |
 |------|------|------|------|
 | **M4.1.a** | 数据迁移 + `engine/` 骨架 + `/start /stop /status /ticks /step` + `dry_run` 全流程 | ✅ **已完成**（2026-04-20） | 2 天 |
-| **M4.1.b** | LangGraph 子图（plan/speak/persist）真 LLM 路径 + 提示词模板 + zod 输出校验 | ⏳ 待开工 | 3 天 |
+| **M4.1.b** | 真 LLM 图（plan/speak/memory/persist）+ 提示词模板 + zod 严格校验 + 单节点重试 1 次 → 降级 | ✅ **已完成**（2026-04-20，采用轻量路线：zod + 手写线性图，暂不引入 LangGraph.js，未来加反思/循环时再升级） | 3 天 |
 | **M4.1.c** | 前端沙盒运行控制条（▶/⏭/⏸、dry_run 开关、速率、状态灯）+ 启动联动气泡 | ✅ **已完成**（2026-04-20） | 2 天 |
 | **M4.1.d** | smoke（真 LLM 2 NPC × 3 tick）+ 文档收尾 + 阈值微调 | ⏳ 待开工 | 2 天 |
 

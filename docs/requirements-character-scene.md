@@ -14,6 +14,7 @@
 | 0.10 | 2026-04-20 | **沙盒快胜组**：新增 `POST /api/upload/image`（8MB 通用图片，存 `uploads/images`）；`SceneForm` 支持底图本地上传与预览；沙盒拖拽网格吸附（始终/按 Shift 临时，步长 10/20/40/80）；节点右键菜单（解除关联 / 编辑 `role_note` / 编辑 `simulation_meta`） |
 | 0.11 | 2026-04-20 | **M4 选型稿 + M4.1 集成细设**：新增 `docs/engine-selection.md`（候选 C1~C7、推荐 C1+C2）与 `docs/engine-integration-m4.1.md`（`/api/engine/*`、`simulation_meta` v1.0、Tick 调度器、`npc_tick_log`、M4.1.a~d 拆分）；**仅文档**，不改代码 |
 | 0.12 | 2026-04-20 | **M4.1.a 落地**：新增 `src/engine/`（scheduler/registry/bus/graph 骨架）、`/api/engine/{start,stop,step,status,ticks}`、`npc_tick_log` 表 + `db:migrate-engine` 脚本、`ENGINE_*` 环境变量；当前**仅 dry_run 可用**（无 LLM 调用），live 模式占位待 M4.1.b；后端新增 9 条单测，共 20 条全部通过 |
+| 0.13 | 2026-04-20 | **M4.1.c + M4.1.b 联袂落地**：①前端 `Sandbox.vue` 新增引擎控制条（▶/⏭/⏸、dry_run 开关、速率选择、状态灯），自动联动气泡显示；②后端 `graph/build.ts` 真 LLM 路径 plan→speak→memory（依赖 zod，未引 LangGraph.js），单节点重试 1 次后降级，失败写 `npc_tick_log`=error；新增 `graph/prompts.ts` 中文模板框架，LLM 输出语言由 NPC 自身设定决定。后端 26 条 + 前端 13 条单测全绿 |
 
 ---
 
