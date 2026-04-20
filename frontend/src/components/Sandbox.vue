@@ -16,6 +16,13 @@ import {
   replaceSceneNpcs,
 } from '../api/scene'
 import { updateNpc } from '../api/npc'
+import {
+  startEngine,
+  stopEngine,
+  stepEngine,
+  getEngineStatus,
+} from '../api/engine'
+import type { EngineStatus } from '../types/engine'
 import type { Scene, SceneDetail, SceneNpcLink } from '../types/scene'
 import { NPC_CATEGORIES } from '../constants/npc'
 import { resolveAvatarUrl } from '../utils/avatar'
@@ -53,6 +60,18 @@ let bubbleTimer: ReturnType<typeof setInterval> | null = null
 /** 网格吸附：默认关（用户拖拽时可按住 Shift 临时吸附）；开启后始终吸附 */
 const snapEnabled = ref(false)
 const snapStep = ref(20)
+
+/**
+ * M4.1 引擎控制：▶ 开始 / ⏭ 单步 / ⏸ 停止
+ * - 默认 dry_run=true，不调用 LLM，仅跑确定性伪输出（由后端 graph/build.ts 提供）
+ * - 引擎运行时每 3s 轮询一次 /engine/status；停止后清理定时器
+ */
+const engineStatus = ref<EngineStatus | null>(null)
+const engineDryRun = ref(true)
+const engineInterval = ref(5000)
+const engineLoading = ref(false)
+let engineStatusTimer: ReturnType<typeof setInterval> | null = null
+const engineRunning = computed(() => engineStatus.value?.running === true)
 
 /** 节点右键菜单状态（相对画布容器左上角） */
 const ctxMenu = ref<{ visible: boolean; x: number; y: number; npc: SceneNpcLink | null }>({
@@ -227,6 +246,104 @@ watch(bubbleEnabled, (on) => {
 watch(bubbleIntervalMs, () => {
   if (bubbleEnabled.value) startBubbleTimer()
 })
+
+/** 启动引擎 tick 循环（dry_run 默认开） */
+async function onEngineStart() {
+  if (!activeSceneId.value) return
+  engineLoading.value = true
+  try {
+    const { data } = await startEngine({
+      scene_id: activeSceneId.value,
+      interval_ms: engineInterval.value,
+      dry_run: engineDryRun.value,
+      concurrency: 2,
+    })
+    if (data.code === 0 && data.data) {
+      engineStatus.value = data.data
+      startEngineStatusTimer()
+      /** 启动后自动打开气泡（用户可随时关） */
+      if (!bubbleEnabled.value) bubbleEnabled.value = true
+      toast.success(engineDryRun.value ? '引擎已启动（dry_run）' : '引擎已启动')
+    } else {
+      toast.error(data.message || '启动失败')
+    }
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string; error?: string } } }
+    const msg = err.response?.data?.message || '启动失败'
+    toast.error(msg)
+  } finally {
+    engineLoading.value = false
+  }
+}
+
+async function onEngineStop(force = false) {
+  if (!activeSceneId.value) return
+  engineLoading.value = true
+  try {
+    const { data } = await stopEngine(activeSceneId.value, force)
+    if (data.code === 0) {
+      engineStatus.value = data.data || null
+      stopEngineStatusTimer()
+      toast.info(force ? '引擎已强制停止' : '引擎已停止')
+    } else {
+      toast.error(data.message || '停止失败')
+    }
+  } catch (e) {
+    console.error(e)
+    toast.error('停止失败')
+  } finally {
+    engineLoading.value = false
+  }
+}
+
+async function onEngineStep() {
+  if (!activeSceneId.value) return
+  engineLoading.value = true
+  try {
+    const { data } = await stepEngine(activeSceneId.value, engineDryRun.value)
+    if (data.code === 0) {
+      engineStatus.value = data.data || null
+      /** 手动单步后立即刷一次气泡 */
+      if (bubbleEnabled.value) void pollStatus()
+      toast.success(`已执行 tick #${engineStatus.value?.tick ?? '?'}`)
+    } else {
+      toast.error(data.message || '单步失败')
+    }
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } }
+    toast.error(err.response?.data?.message || '单步失败')
+  } finally {
+    engineLoading.value = false
+  }
+}
+
+async function pollEngineStatus() {
+  if (!activeSceneId.value) return
+  try {
+    const { data } = await getEngineStatus(activeSceneId.value)
+    if (data.code === 0) {
+      engineStatus.value = data.data || null
+      /** 后端自停（max_ticks）后，前端同步关定时器 */
+      if (!engineStatus.value?.running) {
+        stopEngineStatusTimer()
+      }
+    }
+  } catch {
+    /* 静默；下次轮询再试 */
+  }
+}
+
+function startEngineStatusTimer() {
+  stopEngineStatusTimer()
+  engineStatusTimer = setInterval(pollEngineStatus, 3000)
+}
+
+function stopEngineStatusTimer() {
+  if (engineStatusTimer) {
+    clearInterval(engineStatusTimer)
+    engineStatusTimer = null
+  }
+}
 
 /** 画布容器的 CSS 尺寸（视口固定；内部通过相机显示 world） */
 const canvasWrapStyle = computed(() => ({
@@ -771,17 +888,34 @@ async function loadSceneDetail(id: number) {
 }
 
 watch(activeSceneId, (id) => {
-  if (id) loadSceneDetail(id)
-  else destroyGame()
+  if (id) {
+    loadSceneDetail(id)
+    /** 切场景时重置引擎面板状态并拉一次最新状态 */
+    stopEngineStatusTimer()
+    engineStatus.value = null
+    void pollEngineStatus().then(() => {
+      if (engineStatus.value?.running) startEngineStatusTimer()
+    })
+  } else {
+    destroyGame()
+    stopEngineStatusTimer()
+    engineStatus.value = null
+  }
 })
 
 onMounted(async () => {
   await loadScenes()
-  if (activeSceneId.value) await loadSceneDetail(activeSceneId.value)
+  if (activeSceneId.value) {
+    await loadSceneDetail(activeSceneId.value)
+    /** 恢复引擎状态：若后端已在跑，自动挂起状态轮询 */
+    await pollEngineStatus()
+    if (engineStatus.value?.running) startEngineStatusTimer()
+  }
 })
 
 onBeforeUnmount(() => {
   stopBubbleTimer()
+  stopEngineStatusTimer()
   destroyGame()
 })
 
@@ -821,6 +955,37 @@ function categoryLabel(v: string | null | undefined) {
           <el-option label="40 px" :value="40" />
           <el-option label="80 px" :value="80" />
         </el-select>
+      </div>
+      <!-- M4.1 引擎控制条 -->
+      <div class="flex items-center gap-2 px-2 py-1 rounded border border-[var(--ainpc-border)] bg-[rgba(13,17,23,0.45)]">
+        <span class="text-xs text-[var(--ainpc-muted)]">引擎</span>
+        <el-tag v-if="engineRunning" type="success" size="small" effect="dark">
+          运行 #{{ engineStatus?.tick ?? 0 }}
+        </el-tag>
+        <el-tag v-else type="info" size="small">停止</el-tag>
+        <el-tooltip content="dry_run：跳过 LLM 仅跑确定性伪输出，用于验证链路" placement="top">
+          <el-switch v-model="engineDryRun" active-text="dry_run" inline-prompt :disabled="engineRunning" />
+        </el-tooltip>
+        <el-select v-model="engineInterval" size="small" class="w-24" :disabled="engineRunning">
+          <el-option label="2 秒" :value="2000" />
+          <el-option label="5 秒" :value="5000" />
+          <el-option label="10 秒" :value="10000" />
+          <el-option label="30 秒" :value="30000" />
+          <el-option label="60 秒" :value="60000" />
+        </el-select>
+        <el-button-group>
+          <el-tooltip content="启动 tick 循环" placement="top">
+            <el-button size="small" type="primary" :disabled="!activeSceneId || engineRunning"
+              :loading="engineLoading && !engineRunning" @click="onEngineStart">▶</el-button>
+          </el-tooltip>
+          <el-tooltip content="执行单次 tick（未启动时临时跑一次）" placement="top">
+            <el-button size="small" :disabled="!activeSceneId || engineLoading" @click="onEngineStep">⏭</el-button>
+          </el-tooltip>
+          <el-tooltip content="软停（等当前 tick 完）" placement="top">
+            <el-button size="small" :disabled="!engineRunning" :loading="engineLoading && engineRunning"
+              @click="onEngineStop(false)">⏸</el-button>
+          </el-tooltip>
+        </el-button-group>
       </div>
       <div class="flex-1" />
       <div class="flex items-center gap-2">
@@ -911,6 +1076,13 @@ function categoryLabel(v: string | null | undefined) {
       交互：<strong>左键</strong>拖拽节点（按 <kbd>Shift</kbd> 临时吸附）/ <strong>右键</strong>节点弹出菜单 /
       <strong>滚轮</strong>缩放 / <strong>右键拖拽空白处</strong>平移；点击「保存布局」将坐标写入
       <code>scene_npc.pos_x / pos_y</code>。视口 {{ VIEWPORT_W }}×{{ VIEWPORT_H }}；当前世界 {{ worldW }}×{{ worldH }}。
+    </p>
+    <p v-if="engineStatus" class="text-xs text-[var(--ainpc-muted)] mt-1">
+      引擎：{{ engineRunning ? '运行中' : '空闲' }}
+      <span v-if="engineStatus.last_tick_at"> · 最近 tick {{ new Date(engineStatus.last_tick_at).toLocaleTimeString() }}</span>
+      <span v-if="engineStatus.last_duration_ms != null"> · 耗时 {{ engineStatus.last_duration_ms }}ms</span>
+      <span v-if="engineStatus.errors_recent"> · 错误 {{ engineStatus.errors_recent }}</span>
+      <span v-if="engineStatus.config?.dry_run"> · <code>dry_run</code></span>
     </p>
 
     <!-- role_note 编辑对话框 -->

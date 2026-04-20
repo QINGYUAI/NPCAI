@@ -388,7 +388,7 @@ curl -X POST localhost:3000/api/engine/start \
 |------|------|------|------|
 | **M4.1.a** | 数据迁移 + `engine/` 骨架 + `/start /stop /status /ticks /step` + `dry_run` 全流程 | ✅ **已完成**（2026-04-20） | 2 天 |
 | **M4.1.b** | LangGraph 子图（plan/speak/persist）真 LLM 路径 + 提示词模板 + zod 输出校验 | ⏳ 待开工 | 3 天 |
-| **M4.1.c** | 前端沙盒运行控制条 + 气泡数据源切换到 `/engine/ticks` | ⏳ 待开工 | 2 天 |
+| **M4.1.c** | 前端沙盒运行控制条（▶/⏭/⏸、dry_run 开关、速率、状态灯）+ 启动联动气泡 | ✅ **已完成**（2026-04-20） | 2 天 |
 | **M4.1.d** | smoke（真 LLM 2 NPC × 3 tick）+ 文档收尾 + 阈值微调 | ⏳ 待开工 | 2 天 |
 
 > 总计约 **9 人·日**（不含评审 & buffer）。
