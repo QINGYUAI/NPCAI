@@ -63,8 +63,14 @@ cd frontend && npm run dev   # http://localhost:5173
 | GET/POST/PUT/DELETE/PATCH | /api/config | AI 配置 |
 | GET/POST/PUT/DELETE | /api/npc | NPC；列表支持 `?scene_id=`；`GET /api/npc/:id/scenes` 查所属场景 |
 | GET/POST/PUT/DELETE、`PUT /api/scene/:id/npcs`、`PUT /api/scene/:id/layout`、`GET /api/scene/:id/export?format=json\|csv` | /api/scene | 场景、关联、2D 沙盒布局与导出 |
-| POST | /api/upload/avatar | 上传头像 |
+| POST | /api/upload/avatar | 上传头像（2MB） |
+| POST | /api/upload/image | 上传通用图片（8MB，沙盒底图等） |
 | GET | /api/ai-logs | AI 调用日志 |
+
+## 文档
+
+- [`docs/requirements-character-scene.md`](./docs/requirements-character-scene.md)：人物·场景需求与实现记录（含里程碑 M1~M3.3）
+- [`docs/engine-selection.md`](./docs/engine-selection.md)：**M4 主仿真引擎选型报告**（待评审）
 
 ## 配置字段说明
 
