@@ -79,6 +79,7 @@ cd frontend && npm run dev   # http://localhost:5173
 - [`docs/engine-selection.md`](./docs/engine-selection.md)：**M4 主仿真引擎选型报告**（待评审）
 - [`docs/engine-integration-m4.1.md`](./docs/engine-integration-m4.1.md)：**M4.1 引擎集成细设**（初稿，待评审）
 - [`docs/engine-smoke.md`](./docs/engine-smoke.md)：**M4.1.d 真 LLM Smoke 运行手册**（`npm run smoke:engine`）
+- [`docs/m4.2-roadmap.md`](./docs/m4.2-roadmap.md)：**M4.2 路线图**（观测性/记忆向量化/反思/事件总线，初稿待评审）
 
 ## 配置字段说明
 

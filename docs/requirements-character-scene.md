@@ -17,6 +17,7 @@
 | 0.13 | 2026-04-20 | **M4.1.c + M4.1.b 联袂落地**：①前端 `Sandbox.vue` 新增引擎控制条（▶/⏭/⏸、dry_run 开关、速率选择、状态灯），自动联动气泡显示；②后端 `graph/build.ts` 真 LLM 路径 plan→speak→memory（依赖 zod，未引 LangGraph.js），单节点重试 1 次后降级，失败写 `npc_tick_log`=error；新增 `graph/prompts.ts` 中文模板框架，LLM 输出语言由 NPC 自身设定决定。后端 26 条 + 前端 13 条单测全绿 |
 | 0.14 | 2026-04-20 | **M4.1.d 工具链交付**：新增 `backend/scripts/smoke-engine.ts` 与 `npm run smoke:engine`（纯 REST 驱动端到端 smoke，自动汇总 tick_log / ai_call_log 并给 PASS/WARN/FAIL 判决）；新增运行手册 [`docs/engine-smoke.md`](./engine-smoke.md) 含前置检查、curl 备选、常见失败排查表、DoD 清单 |
 | 1.0 | 2026-04-20 | **🎉 M4.1 整体关盘**：业主本地真 LLM smoke 🟢 PASS（2 NPC × 3 tick，18 次 LLM 调用零错误，平均 tick 15s，NPC 人设鲜明稳定，`neighbors` 感知与 `memory_summary` 跨 tick 累积均验证生效）。M4.1 四个子里程碑（a/b/c/d）全部完成，进入 M4.2 规划（候选方向：记忆向量化 M-1、反思循环、事件触发总线） |
+| 1.1 | 2026-04-20 | **M4.2 路线图交付**：新增 [`docs/m4.2-roadmap.md`](./m4.2-roadmap.md)，按业主选择把 5 条升级路径（尾补丁 / 观测性 / 记忆向量化 / 反思 / 事件总线）拆成 5 个独立可回滚子里程碑 M4.2.0~.4（总计 12.5 天），含数据模型、API、引擎内部变更、前端改动、测试矩阵、风险与 DoD；**仅文档**，不改代码，待评审 |
 
 ---
 
