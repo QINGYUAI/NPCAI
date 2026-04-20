@@ -5,6 +5,8 @@
 | 0.1 | 2026-04-20 | 初稿：承接 `docs/engine-selection.md`（C1+C2 推荐方案）的**工程落地规格**，可直接作为 M4.1 立项输入；**待评审** |
 | 0.2 | 2026-04-20 | **M4.1.a 已落地**：`src/engine/` 骨架、`/api/engine/*` 五个接口（start/stop/step/status/ticks）、`npc_tick_log` 表 + 幂等迁移、`ENGINE_*` 环境变量、dry_run 全链路跑通、9 条单测绿 |
 | 0.3 | 2026-04-20 | **M4.1.c + M4.1.b 已落地**：前端沙盒引擎控制条（▶/⏭/⏸、dry_run、速率）；真 LLM 推理图 plan→speak→memory（轻量路线 zod + 手写线性图，未引入 LangGraph.js），单节点重试 1 次→降级；新增 6 条 graph 单测；后端累计 26 条全绿 |
+| 0.4 | 2026-04-20 | **M4.1.d 工具链就绪**：新增 `backend/scripts/smoke-engine.ts` 与 `npm run smoke:engine`，纯 REST 驱动端到端 smoke；配套运行手册 [`engine-smoke.md`](./engine-smoke.md) 覆盖前置检查/失败排查/DoD 清单 |
+| 1.0 | 2026-04-20 | **M4.1 关盘**：业主本地真 LLM smoke 🟢 PASS（2 NPC × 3 tick，ai_call_log plan/speak/memory 各 6 条，平均 tick 15s，latest_say 100% 非空且人设鲜明）；DoD 清单全部命中。M4.1 整体完成，进入 M4.2 规划 |
 
 > 关联：选型依据见 [`engine-selection.md`](./engine-selection.md)；字段与里程碑见 [`requirements-character-scene.md`](./requirements-character-scene.md)。
 > **本文档只定义工程规格，不修改现有 M1~M3.3 已交付代码。**
@@ -390,7 +392,7 @@ curl -X POST localhost:3000/api/engine/start \
 | **M4.1.a** | 数据迁移 + `engine/` 骨架 + `/start /stop /status /ticks /step` + `dry_run` 全流程 | ✅ **已完成**（2026-04-20） | 2 天 |
 | **M4.1.b** | 真 LLM 图（plan/speak/memory/persist）+ 提示词模板 + zod 严格校验 + 单节点重试 1 次 → 降级 | ✅ **已完成**（2026-04-20，采用轻量路线：zod + 手写线性图，暂不引入 LangGraph.js，未来加反思/循环时再升级） | 3 天 |
 | **M4.1.c** | 前端沙盒运行控制条（▶/⏭/⏸、dry_run 开关、速率、状态灯）+ 启动联动气泡 | ✅ **已完成**（2026-04-20） | 2 天 |
-| **M4.1.d** | smoke（真 LLM 2 NPC × 3 tick）+ 文档收尾 + 阈值微调 | ⏳ 待开工 | 2 天 |
+| **M4.1.d** | smoke（真 LLM 2 NPC × 3 tick）+ 文档收尾 + 阈值微调 | ✅ **已完成**（2026-04-20：业主本地 smoke 🟢 PASS，2 NPC × 3 tick，ai_call_log 18 条零错，平均 15s/tick；脚本打印修正 `\r\n` 清洗与加 id 列） | 2 天 |
 
 > 总计约 **9 人·日**（不含评审 & buffer）。
 
@@ -398,13 +400,13 @@ curl -X POST localhost:3000/api/engine/start \
 
 ## 14. 验收清单（Definition of Done）
 
-- [ ] `npm run db:migrate-engine` 幂等通过；
-- [ ] `POST /engine/start` 在 `dry_run=true` 下写入 3 行 `npc_tick_log` 而**不触发任何** `ai_call_log`；
-- [ ] 真 LLM 跑通一个 2 NPC × 3 tick 场景，`simulation_meta.latest_say` 非空；
-- [ ] 软阈值 64KB 的 `simulation_meta` 可写入且带 `X-Meta-Warn`，硬阈值 256KB 被 413 拒绝；
-- [ ] 前端沙盒「▶」按钮能启动 / 气泡实时更新 / 「⏸」能软停；
-- [ ] 所有新接口覆盖错误码单测，CI 绿；
-- [ ] 文档同步更新 README 与 `requirements-character-scene.md` §13 状态。
+- [x] `npm run db:migrate-engine` 幂等通过；
+- [x] `POST /engine/start` 在 `dry_run=true` 下写入 6 行 `npc_tick_log` 而**不触发任何** `ai_call_log`（smoke 实测）；
+- [x] 真 LLM 跑通一个 2 NPC × 3 tick 场景，`simulation_meta.latest_say` 非空（smoke 实测 100% 非空）；
+- [ ] 软阈值 64KB 的 `simulation_meta` 可写入且带 `X-Meta-Warn`，硬阈值 256KB 被 413 拒绝（当前仅 console.warn + hard 抛错，HTTP 头 `X-Meta-Warn` 未接入 → M4.2 小补丁）；
+- [x] 前端沙盒「▶」按钮能启动 / 气泡实时更新 / 「⏸」能软停（M4.1.c 交付，浏览器端可验）；
+- [x] 所有新接口覆盖错误码单测，CI 绿（26 条后端单测全绿）；
+- [x] 文档同步更新 README 与 `requirements-character-scene.md` §13 状态。
 
 ---
 

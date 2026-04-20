@@ -13,6 +13,7 @@
     "db:migrate-ai-log": "tsx src/db/migrate-ai-log.ts",
     "db:migrate-scene": "tsx src/db/migrate-scene.ts",
     "db:migrate-engine": "tsx src/db/migrate-engine.ts",
+    "smoke:engine": "tsx scripts/smoke-engine.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -15,6 +15,8 @@
 | 0.11 | 2026-04-20 | **M4 选型稿 + M4.1 集成细设**：新增 `docs/engine-selection.md`（候选 C1~C7、推荐 C1+C2）与 `docs/engine-integration-m4.1.md`（`/api/engine/*`、`simulation_meta` v1.0、Tick 调度器、`npc_tick_log`、M4.1.a~d 拆分）；**仅文档**，不改代码 |
 | 0.12 | 2026-04-20 | **M4.1.a 落地**：新增 `src/engine/`（scheduler/registry/bus/graph 骨架）、`/api/engine/{start,stop,step,status,ticks}`、`npc_tick_log` 表 + `db:migrate-engine` 脚本、`ENGINE_*` 环境变量；当前**仅 dry_run 可用**（无 LLM 调用），live 模式占位待 M4.1.b；后端新增 9 条单测，共 20 条全部通过 |
 | 0.13 | 2026-04-20 | **M4.1.c + M4.1.b 联袂落地**：①前端 `Sandbox.vue` 新增引擎控制条（▶/⏭/⏸、dry_run 开关、速率选择、状态灯），自动联动气泡显示；②后端 `graph/build.ts` 真 LLM 路径 plan→speak→memory（依赖 zod，未引 LangGraph.js），单节点重试 1 次后降级，失败写 `npc_tick_log`=error；新增 `graph/prompts.ts` 中文模板框架，LLM 输出语言由 NPC 自身设定决定。后端 26 条 + 前端 13 条单测全绿 |
+| 0.14 | 2026-04-20 | **M4.1.d 工具链交付**：新增 `backend/scripts/smoke-engine.ts` 与 `npm run smoke:engine`（纯 REST 驱动端到端 smoke，自动汇总 tick_log / ai_call_log 并给 PASS/WARN/FAIL 判决）；新增运行手册 [`docs/engine-smoke.md`](./engine-smoke.md) 含前置检查、curl 备选、常见失败排查表、DoD 清单 |
+| 1.0 | 2026-04-20 | **🎉 M4.1 整体关盘**：业主本地真 LLM smoke 🟢 PASS（2 NPC × 3 tick，18 次 LLM 调用零错误，平均 tick 15s，NPC 人设鲜明稳定，`neighbors` 感知与 `memory_summary` 跨 tick 累积均验证生效）。M4.1 四个子里程碑（a/b/c/d）全部完成，进入 M4.2 规划（候选方向：记忆向量化 M-1、反思循环、事件触发总线） |
 
 ---
 
@@ -289,7 +291,7 @@ NPC 侧可增加：
 
 | 事项 | 状态 | 说明 |
 |------|------|------|
-| **主仿真/运行时引擎** | **选型 + 集成细设 双稿待评审** | 详见 §1.4；**选型报告**见 [`docs/engine-selection.md`](./engine-selection.md)（推荐「AINPC 内置 Tick + LangGraph.js」同进程组合）；**集成细设**见 [`docs/engine-integration-m4.1.md`](./engine-integration-m4.1.md)（含 `/api/engine/*` API、`simulation_meta` v1.0、Tick 调度器、`npc_tick_log` 表、里程碑 M4.1.a~d）。 |
+| **主仿真/运行时引擎** | ✅ **M4.1 已关盘**（C1 内置 Tick + zod 手写线性图；LangGraph.js 延后） | **选型报告**：[`docs/engine-selection.md`](./engine-selection.md)；**集成细设**：[`docs/engine-integration-m4.1.md`](./engine-integration-m4.1.md)（v1.0 关盘版）；**Smoke 手册**：[`docs/engine-smoke.md`](./engine-smoke.md)。真 LLM 2 NPC × 3 tick 通过 DoD。下一阶段 M4.2 待规划（记忆向量化 / 反思循环 / 事件总线 三选一或组合）|
 
 ---
 
