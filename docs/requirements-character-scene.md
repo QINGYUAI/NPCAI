@@ -13,6 +13,7 @@
 | 0.9 | 2026-04-20 | **沙盒增强 + 工程化**：头像纹理（圆形遮罩 + 失败回退）、状态气泡 M3.2（轮询 `simulation_meta.latest_say / latest_action`）、`scene.width/height` + 相机 zoom/pan、Vite 手动分包（Phaser/Element/Vue 独立 chunk）、Vitest 单测（后端 Supertest 路由契约 / 前端纯函数） |
 | 0.10 | 2026-04-20 | **沙盒快胜组**：新增 `POST /api/upload/image`（8MB 通用图片，存 `uploads/images`）；`SceneForm` 支持底图本地上传与预览；沙盒拖拽网格吸附（始终/按 Shift 临时，步长 10/20/40/80）；节点右键菜单（解除关联 / 编辑 `role_note` / 编辑 `simulation_meta`） |
 | 0.11 | 2026-04-20 | **M4 选型稿 + M4.1 集成细设**：新增 `docs/engine-selection.md`（候选 C1~C7、推荐 C1+C2）与 `docs/engine-integration-m4.1.md`（`/api/engine/*`、`simulation_meta` v1.0、Tick 调度器、`npc_tick_log`、M4.1.a~d 拆分）；**仅文档**，不改代码 |
+| 0.12 | 2026-04-20 | **M4.1.a 落地**：新增 `src/engine/`（scheduler/registry/bus/graph 骨架）、`/api/engine/{start,stop,step,status,ticks}`、`npc_tick_log` 表 + `db:migrate-engine` 脚本、`ENGINE_*` 环境变量；当前**仅 dry_run 可用**（无 LLM 调用），live 模式占位待 M4.1.b；后端新增 9 条单测，共 20 条全部通过 |
 
 ---
 

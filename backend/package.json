@@ -12,6 +12,7 @@
     "db:migrate-npc-fields": "tsx src/db/migrate-npc-fields.ts",
     "db:migrate-ai-log": "tsx src/db/migrate-ai-log.ts",
     "db:migrate-scene": "tsx src/db/migrate-scene.ts",
+    "db:migrate-engine": "tsx src/db/migrate-engine.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

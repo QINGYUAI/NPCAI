@@ -3,6 +3,7 @@
 | 文档版本 | 日期 | 说明 |
 |---------|------|------|
 | 0.1 | 2026-04-20 | 初稿：承接 `docs/engine-selection.md`（C1+C2 推荐方案）的**工程落地规格**，可直接作为 M4.1 立项输入；**待评审** |
+| 0.2 | 2026-04-20 | **M4.1.a 已落地**：`src/engine/` 骨架、`/api/engine/*` 五个接口（start/stop/step/status/ticks）、`npc_tick_log` 表 + 幂等迁移、`ENGINE_*` 环境变量、dry_run 全链路跑通、9 条单测绿 |
 
 > 关联：选型依据见 [`engine-selection.md`](./engine-selection.md)；字段与里程碑见 [`requirements-character-scene.md`](./requirements-character-scene.md)。
 > **本文档只定义工程规格，不修改现有 M1~M3.3 已交付代码。**
@@ -383,12 +384,12 @@ curl -X POST localhost:3000/api/engine/start \
 
 ## 13. 里程碑拆分（M4.1 内部）
 
-| 代码 | 任务 | 预估 |
-|------|------|------|
-| **M4.1.a** | 数据迁移 + `engine/` 骨架 + `/start /stop /status` + `dry_run` 全流程 | 2 天 |
-| **M4.1.b** | LangGraph 子图（plan/speak/persist）+ `npc_tick_log` + `/ticks` | 3 天 |
-| **M4.1.c** | 前端沙盒运行控制条 + 气泡数据源切换 | 2 天 |
-| **M4.1.d** | 单测 / smoke / 文档 / 阈值微调 | 2 天 |
+| 代码 | 任务 | 状态 | 预估 |
+|------|------|------|------|
+| **M4.1.a** | 数据迁移 + `engine/` 骨架 + `/start /stop /status /ticks /step` + `dry_run` 全流程 | ✅ **已完成**（2026-04-20） | 2 天 |
+| **M4.1.b** | LangGraph 子图（plan/speak/persist）真 LLM 路径 + 提示词模板 + zod 输出校验 | ⏳ 待开工 | 3 天 |
+| **M4.1.c** | 前端沙盒运行控制条 + 气泡数据源切换到 `/engine/ticks` | ⏳ 待开工 | 2 天 |
+| **M4.1.d** | smoke（真 LLM 2 NPC × 3 tick）+ 文档收尾 + 阈值微调 | ⏳ 待开工 | 2 天 |
 
 > 总计约 **9 人·日**（不含评审 & buffer）。
 

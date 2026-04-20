@@ -23,7 +23,8 @@ npm run db:init
 若已有旧库但缺少 NPC 扩展字段：`npm run db:migrate-npc-fields`  
 需要 AI 调用日志表时：`npm run db:migrate-ai-log`  
 **场景与 `npc.simulation_meta`（人物-场景编排）**：`npm run db:migrate-scene`  
-> `db:migrate-scene` 已幂等；v0.8 追加 `scene.background_image` 与 `scene_npc.pos_x/pos_y`；v0.9 追加 `scene.width`、`scene.height`（2D 沙盒任意尺寸）。
+**M4.1 引擎（`npc_tick_log`）**：`npm run db:migrate-engine`  
+> `db:migrate-scene` 已幂等；v0.8 追加 `scene.background_image` 与 `scene_npc.pos_x/pos_y`；v0.9 追加 `scene.width`、`scene.height`（2D 沙盒任意尺寸）；v0.12 新增 `npc_tick_log`（M4.1.a）。
 
 ### 2. 依赖（根目录一键安装前后端）
 
@@ -66,6 +67,11 @@ cd frontend && npm run dev   # http://localhost:5173
 | POST | /api/upload/avatar | 上传头像（2MB） |
 | POST | /api/upload/image | 上传通用图片（8MB，沙盒底图等） |
 | GET | /api/ai-logs | AI 调用日志 |
+| POST | /api/engine/start | 启动场景 tick（M4.1.a，仅 dry_run 可用） |
+| POST | /api/engine/stop | 停止场景 tick |
+| POST | /api/engine/step | 手动单步 tick |
+| GET | /api/engine/status?scene_id= | 引擎状态 |
+| GET | /api/engine/ticks?scene_id=&after=&limit=&order= | 拉取最近 tick 事件 |
 
 ## 文档
 

@@ -99,3 +99,22 @@ CREATE TABLE IF NOT EXISTS ai_call_log (
   INDEX idx_ai_config (ai_config_id),
   FOREIGN KEY (ai_config_id) REFERENCES ai_config(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI接口调用日志表';
+
+-- M4.1 引擎：NPC 单步决策归档
+CREATE TABLE IF NOT EXISTS npc_tick_log (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+  scene_id BIGINT NOT NULL COMMENT '场景ID',
+  npc_id BIGINT NOT NULL COMMENT 'NPC ID',
+  tick BIGINT NOT NULL COMMENT '场景内单调递增的 tick 序号',
+  started_at DATETIME(3) NOT NULL COMMENT 'tick 开始时间',
+  finished_at DATETIME(3) DEFAULT NULL COMMENT 'tick 完成时间',
+  status VARCHAR(16) NOT NULL COMMENT 'success / error / skipped',
+  input_summary TEXT DEFAULT NULL COMMENT '本 tick 输入摘要',
+  output_meta JSON DEFAULT NULL COMMENT '本 tick 产出 simulation_meta 快照',
+  error_message TEXT DEFAULT NULL COMMENT '错误信息',
+  duration_ms INT DEFAULT NULL COMMENT '耗时毫秒',
+  INDEX idx_scene_tick (scene_id, tick),
+  INDEX idx_npc (npc_id),
+  CONSTRAINT fk_tick_scene FOREIGN KEY (scene_id) REFERENCES scene(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tick_npc FOREIGN KEY (npc_id) REFERENCES npc(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='NPC 单步决策归档';

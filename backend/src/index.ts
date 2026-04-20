@@ -10,6 +10,8 @@ import { npcRouter } from './routes/npc.js';
 import { uploadRouter } from './routes/upload.js';
 import { aiLogRouter } from './routes/aiLog.js';
 import { sceneRouter } from './routes/scene.js';
+import { engineRouter } from './routes/engine.js';
+import { initEngine } from './engine/index.js';
 import path from 'path';
 
 const app = express();
@@ -29,6 +31,9 @@ app.use('/api/npc', npcRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/ai-logs', aiLogRouter);
 app.use('/api/scene', sceneRouter);
+app.use('/api/engine', engineRouter);
+
+initEngine();
 
 // 健康检查
 app.get('/api/health', (_, res) => {
