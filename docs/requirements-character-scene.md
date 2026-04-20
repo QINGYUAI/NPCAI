@@ -11,6 +11,7 @@
 | 0.7 | 2026-04-20 | **M1 & M2 实现完成**：`scene`/`scene_npc` 表、`npc.simulation_meta`、场景 CRUD、关联覆盖、导出（JSON/CSV）、NPC 侧场景展示/筛选、列表卡片展示所属场景数 |
 | 0.8 | 2026-04-20 | **2D 沙盒 MVP（M3.1）**：新增 `scene.background_image`、`scene_npc.pos_x/pos_y`；新增 `PUT /api/scene/:id/layout`；前端 Phaser 3 沙盒 Tab（节点拖拽 + 保存布局） |
 | 0.9 | 2026-04-20 | **沙盒增强 + 工程化**：头像纹理（圆形遮罩 + 失败回退）、状态气泡 M3.2（轮询 `simulation_meta.latest_say / latest_action`）、`scene.width/height` + 相机 zoom/pan、Vite 手动分包（Phaser/Element/Vue 独立 chunk）、Vitest 单测（后端 Supertest 路由契约 / 前端纯函数） |
+| 0.10 | 2026-04-20 | **沙盒快胜组**：新增 `POST /api/upload/image`（8MB 通用图片，存 `uploads/images`）；`SceneForm` 支持底图本地上传与预览；沙盒拖拽网格吸附（始终/按 Shift 临时，步长 10/20/40/80）；节点右键菜单（解除关联 / 编辑 `role_note` / 编辑 `simulation_meta`） |
 
 ---
 
@@ -224,6 +225,7 @@ NPC 侧可增加：
 | M2 | ✅ 已完成（v0.7） | §4.3 后续迭代项（NPC 侧场景展示、按场景筛选、导出 JSON/CSV、`role_note` 录入、NPC 列表所属场景数） |
 | **M3.1** | ✅ 已完成（v0.8） | **2D 沙盒 MVP**：`scene.background_image` + `scene_npc.pos_x/pos_y`；`PUT /:id/layout`；前端 Phaser 3 沙盒 Tab，节点拖拽 + 保存布局（对应附录 A.1 「2D Web 可视化」方向） |
 | **M3.2** | ✅ 已完成（v0.9） | **沙盒增强**：头像纹理 + 圆形遮罩（失败回退首字母）、`simulation_meta.latest_say/latest_action` 轮询气泡（默认关，间隔 2/5/10/30 秒可选）、`scene.width/height` 任意尺寸 + 相机 zoom/pan；并完成首屏分包（Phaser 懒加载独立 chunk）与基础 Vitest 单测 |
+| **M3.3** | ✅ 已完成（v0.10） | **沙盒体验「快胜组」**：底图本地上传（`/api/upload/image`，8MB）、拖拽网格吸附（常开 / Shift 临时，10~80 px 步长）、节点右键菜单（解除关联 / `role_note` / `simulation_meta` 编辑） |
 | M4（愿景，非 v0.x 必选） | ⏳ 引擎未选定 | **主引擎选型并集成**（见 §1.4）；完整记忆流/计划可在引擎侧实现；`simulation_meta` 为先导对接字段 |
 
 ---

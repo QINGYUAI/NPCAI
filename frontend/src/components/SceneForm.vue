@@ -13,6 +13,7 @@ import {
   replaceSceneNpcs,
 } from '../api/scene'
 import { NPC_CATEGORIES } from '../constants/npc'
+import { uploadImage } from '../api/upload'
 
 const props = defineProps<{
   id: number | null
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>()
 
 const loading = ref(false)
+const bgUploading = ref(false)
 const npcOptions = ref<Npc[]>([])
 
 const name = ref('')
@@ -38,6 +40,25 @@ const sort = ref(0)
 
 /** 关联行：npc_id 为 0 表示未选择 */
 const rows = ref<Array<{ npc_id: number; role_note: string }>>([])
+
+/** 底图上传：走通用 /api/upload/image（8MB 上限） */
+async function handleBackgroundUpload(file: File) {
+  if (file.size > 8 * 1024 * 1024) {
+    toast.error('图片不超过 8MB')
+    return false
+  }
+  bgUploading.value = true
+  try {
+    const url = await uploadImage(file)
+    backgroundImage.value = url
+    toast.success('上传成功')
+  } catch (e) {
+    toast.error((e as Error).message || '上传失败')
+  } finally {
+    bgUploading.value = false
+  }
+  return false
+}
 
 async function loadNpcs() {
   try {
@@ -216,8 +237,25 @@ onMounted(loadNpcs)
         <el-select v-model="tagList" multiple filterable allow-create default-first-option class="w-full"
           placeholder="输入标签后回车" />
       </el-form-item>
-      <el-form-item label="沙盒底图 URL（可选，用于 2D 可视化）">
-        <el-input v-model="backgroundImage" placeholder="https://... 或 /path/to/bg.png" clearable />
+      <el-form-item label="沙盒底图（可选，用于 2D 可视化）">
+        <div class="flex flex-wrap items-center gap-3">
+          <el-upload :show-file-list="false" :disabled="bgUploading"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            :before-upload="(raw: File) => handleBackgroundUpload(raw)">
+            <template #trigger>
+              <el-button size="small" :loading="bgUploading">本地上传</el-button>
+            </template>
+          </el-upload>
+          <el-input v-model="backgroundImage" placeholder="或粘贴图片 URL" clearable
+            class="flex-1 min-w-0 font-mono-nums text-sm" />
+        </div>
+        <div v-if="backgroundImage" class="mt-2">
+          <img :src="backgroundImage" alt="预览" class="max-w-[200px] max-h-[120px] rounded border border-[var(--ainpc-border)]"
+            onerror="this.style.display='none'" />
+        </div>
+        <p class="text-xs text-[var(--ainpc-muted)] mt-1.5">
+          支持 JPG、PNG、GIF、WebP，本地上传不超过 8MB
+        </p>
       </el-form-item>
       <el-row :gutter="16">
         <el-col :span="12">

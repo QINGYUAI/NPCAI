@@ -8,6 +8,7 @@ import {
   colorOfCategory,
   extractBubbleText,
   fallbackPosition,
+  snapTo,
   CATEGORY_COLOR_DEFAULT,
 } from './sandbox'
 
@@ -61,6 +62,18 @@ describe('fallbackPosition', () => {
     const p = fallbackPosition(0, 1, 1000, 1000)
     expect(p.x).toBeCloseTo(100)
     expect(p.y).toBeCloseTo(100)
+  })
+})
+
+describe('snapTo', () => {
+  it('正常吸附到最接近的步长倍数', () => {
+    expect(snapTo(17, 20)).toBe(20)
+    expect(snapTo(9, 20)).toBe(0)
+    expect(snapTo(30, 20)).toBe(40)
+  })
+  it('步长 <=0 时原样返回', () => {
+    expect(snapTo(17, 0)).toBe(17)
+    expect(snapTo(17, -5)).toBe(17)
   })
 })
 

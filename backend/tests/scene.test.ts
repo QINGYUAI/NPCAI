@@ -39,10 +39,10 @@ const connection = {
     execCalls.push(args)
     return [{}, null]
   }),
-  beginTransaction: vi.fn(async () => {}),
-  commit: vi.fn(async () => {}),
-  rollback: vi.fn(async () => {}),
-  release: vi.fn(() => {}),
+  beginTransaction: vi.fn(async () => { }),
+  commit: vi.fn(async () => { }),
+  rollback: vi.fn(async () => { }),
+  release: vi.fn(() => { }),
 }
 
 /** Hoisted mock：控制 scene controller 拿到的 pool */

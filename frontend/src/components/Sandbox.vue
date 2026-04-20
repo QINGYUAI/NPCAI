@@ -8,7 +8,14 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { toast } from 'vue3-toastify'
 import * as Phaser from 'phaser'
-import { getSceneList, getSceneById, updateSceneLayout } from '../api/scene'
+import { ElMessageBox } from 'element-plus'
+import {
+  getSceneList,
+  getSceneById,
+  updateSceneLayout,
+  replaceSceneNpcs,
+} from '../api/scene'
+import { updateNpc } from '../api/npc'
 import type { Scene, SceneDetail, SceneNpcLink } from '../types/scene'
 import { NPC_CATEGORIES } from '../constants/npc'
 import { resolveAvatarUrl } from '../utils/avatar'
@@ -18,6 +25,7 @@ import {
   colorOfCategory,
   extractBubbleText,
   fallbackPosition,
+  snapTo,
 } from '../utils/sandbox'
 
 /** 画布视口尺寸（DOM 像素，Phaser Game 的 width/height） */
@@ -41,6 +49,44 @@ const saving = ref(false)
 const bubbleEnabled = ref(false)
 const bubbleIntervalMs = ref(5000)
 let bubbleTimer: ReturnType<typeof setInterval> | null = null
+
+/** 网格吸附：默认关（用户拖拽时可按住 Shift 临时吸附）；开启后始终吸附 */
+const snapEnabled = ref(false)
+const snapStep = ref(20)
+
+/** 节点右键菜单状态（相对画布容器左上角） */
+const ctxMenu = ref<{ visible: boolean; x: number; y: number; npc: SceneNpcLink | null }>({
+  visible: false,
+  x: 0,
+  y: 0,
+  npc: null,
+})
+
+/** 右键菜单触发后，抑制相机 pan，直到 pointerup */
+let rightDownOnNode = false
+
+/** 备注编辑对话框 */
+const roleDialog = ref<{ visible: boolean; npc: SceneNpcLink | null; text: string; saving: boolean }>({
+  visible: false,
+  npc: null,
+  text: '',
+  saving: false,
+})
+
+/** simulation_meta 编辑对话框 */
+const metaDialog = ref<{
+  visible: boolean
+  npc: SceneNpcLink | null
+  text: string
+  error: string
+  saving: boolean
+}>({
+  visible: false,
+  npc: null,
+  text: '',
+  error: '',
+  saving: false,
+})
 
 /** Phaser 实例（shallowRef：避免 Vue 代理干扰 Phaser 内部对象） */
 const gameRef = shallowRef<Phaser.Game | null>(null)
@@ -306,11 +352,11 @@ function createGame(d: SceneDetail) {
         },
       )
 
-      /** 右键/中键拖拽 pan：空白处拖拽平移 */
+      /** 右键/中键拖拽 pan：空白处拖拽平移；若起始于节点则抑制 */
       this.input.on(
         'pointermove',
         (pointer: Phaser.Input.Pointer) => {
-          if (!pointer.isDown) return
+          if (!pointer.isDown || rightDownOnNode) return
           const rightOrMiddle = pointer.rightButtonDown() || pointer.buttons === 4
           if (rightOrMiddle) {
             cam.scrollX -= (pointer.x - pointer.prevPosition.x) / cam.zoom
@@ -318,6 +364,9 @@ function createGame(d: SceneDetail) {
           }
         },
       )
+      this.input.on('pointerup', () => {
+        rightDownOnNode = false
+      })
 
       /** 场景重建后：若气泡开启，立刻渲染一次当前 meta */
       if (bubbleEnabled.value) refreshBubbles()
@@ -447,11 +496,30 @@ function createNpcNode(
   container.on('pointerover', () => bg.setStrokeStyle(3, 0xffffff, 1))
   container.on('pointerout', () => bg.setStrokeStyle(2, 0xffffff, 0.9))
 
+  /** 右键点击：弹出上下文菜单（并抑制相机 pan） */
+  container.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    if (pointer.rightButtonDown()) {
+      rightDownOnNode = true
+      ctxMenu.value = {
+        visible: true,
+        x: pointer.x,
+        y: pointer.y,
+        npc,
+      }
+    }
+  })
+
   container.on(
     'drag',
-    (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
-      const nx = clamp(dragX, NODE_R, W - NODE_R)
-      const ny = clamp(dragY, NODE_R, H - NODE_R)
+    (pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+      /** 吸附：全局开关打开 或 按住 Shift 时启用；步长由 snapStep 控制 */
+      const rawEvent = pointer?.event as unknown as { shiftKey?: boolean } | undefined
+      const shift = !!rawEvent?.shiftKey
+      const doSnap = snapEnabled.value || shift
+      const sx = doSnap ? snapTo(dragX, snapStep.value) : dragX
+      const sy = doSnap ? snapTo(dragY, snapStep.value) : dragY
+      const nx = clamp(sx, NODE_R, W - NODE_R)
+      const ny = clamp(sy, NODE_R, H - NODE_R)
       container.x = nx
       container.y = ny
       /** 同步遮罩位置（世界坐标），保证头像圆形裁剪跟随节点 */
@@ -467,6 +535,156 @@ function createNpcNode(
   )
 
   return { container, bubble: null, maskShape }
+}
+
+/** 关闭右键菜单 */
+function closeCtxMenu() {
+  if (ctxMenu.value.visible) {
+    ctxMenu.value = { visible: false, x: 0, y: 0, npc: null }
+  }
+}
+
+/** 菜单项：解除该 NPC 与当前场景的关联 */
+async function unlinkCurrentNpc() {
+  if (!detail.value || !activeSceneId.value || !ctxMenu.value.npc) return
+  const target = ctxMenu.value.npc
+  closeCtxMenu()
+  try {
+    await ElMessageBox.confirm(
+      `确定要将「${target.npc_name || target.npc_id}」从本场景移除？该 NPC 本身不会被删除。`,
+      '解除关联',
+      { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  /** 以当前 detail 构造覆盖负载（剔除目标 NPC），服务端会自动保留其余 NPC 的 pos_x/pos_y */
+  const kept = detail.value.npcs.filter((n) => n.npc_id !== target.npc_id)
+  const payload = kept.map((n) => ({
+    npc_id: n.npc_id,
+    role_note: n.role_note ?? null,
+  }))
+  try {
+    const { data } = await replaceSceneNpcs(activeSceneId.value, payload)
+    if (data.code !== 0) {
+      toast.error(data.message || '移除失败')
+      return
+    }
+    toast.success('已从本场景移除')
+    await loadSceneDetail(activeSceneId.value)
+  } catch (e) {
+    console.error(e)
+    toast.error('移除失败，请稍后重试')
+  }
+}
+
+/** 菜单项：打开备注编辑对话框 */
+function openRoleDialog() {
+  const npc = ctxMenu.value.npc
+  if (!npc) return
+  roleDialog.value = {
+    visible: true,
+    npc,
+    text: npc.role_note ?? '',
+    saving: false,
+  }
+  closeCtxMenu()
+}
+
+/** 提交备注编辑（以当前 detail.npcs 构造完整覆盖负载，只改目标 role_note） */
+async function saveRoleNote() {
+  const st = roleDialog.value
+  if (!detail.value || !activeSceneId.value || !st.npc) return
+  st.saving = true
+  try {
+    const next = st.text.trim().slice(0, 256)
+    const payload = detail.value.npcs.map((n) => ({
+      npc_id: n.npc_id,
+      role_note: n.npc_id === st.npc!.npc_id ? (next || null) : (n.role_note ?? null),
+    }))
+    const { data } = await replaceSceneNpcs(activeSceneId.value, payload)
+    if (data.code !== 0) {
+      toast.error(data.message || '保存失败')
+      return
+    }
+    toast.success('备注已更新')
+    st.visible = false
+    await loadSceneDetail(activeSceneId.value)
+  } catch (e) {
+    console.error(e)
+    toast.error('保存失败，请稍后重试')
+  } finally {
+    st.saving = false
+  }
+}
+
+/** 菜单项：打开 simulation_meta 编辑对话框（自由 JSON） */
+function openMetaDialog() {
+  const npc = ctxMenu.value.npc
+  if (!npc) return
+  let initial = ''
+  if (npc.simulation_meta && typeof npc.simulation_meta === 'object') {
+    try {
+      initial = JSON.stringify(npc.simulation_meta, null, 2)
+    } catch {
+      initial = ''
+    }
+  }
+  metaDialog.value = {
+    visible: true,
+    npc,
+    text: initial,
+    error: '',
+    saving: false,
+  }
+  closeCtxMenu()
+}
+
+/** 提交 simulation_meta：走 PUT /api/npc/:id，允许 null 清空 */
+async function saveMeta() {
+  const st = metaDialog.value
+  if (!st.npc) return
+  const raw = st.text.trim()
+  let payload: Record<string, unknown> | null = null
+  if (raw !== '') {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed !== null && (typeof parsed !== 'object' || Array.isArray(parsed))) {
+        st.error = 'simulation_meta 必须是 JSON 对象（不允许数组/基础类型）'
+        return
+      }
+      payload = parsed as Record<string, unknown> | null
+    } catch (e) {
+      st.error = 'JSON 解析失败：' + (e as Error).message
+      return
+    }
+  }
+  st.error = ''
+  st.saving = true
+  try {
+    const { data } = await updateNpc(st.npc.npc_id, { simulation_meta: payload })
+    if (data.code !== 0) {
+      toast.error(data.message || '保存失败')
+      return
+    }
+    toast.success('simulation_meta 已更新')
+    st.visible = false
+    /** 就地合并，避免整表重取打断当前未保存的布局；气泡若开启会下一轮轮询刷新 */
+    if (activeSceneId.value && detail.value) {
+      detail.value = {
+        ...detail.value,
+        npcs: detail.value.npcs.map((n) =>
+          n.npc_id === st.npc!.npc_id ? { ...n, simulation_meta: payload } : n,
+        ),
+      }
+      if (bubbleEnabled.value) refreshBubbles()
+    }
+  } catch (e) {
+    console.error(e)
+    toast.error('保存失败，请稍后重试')
+  } finally {
+    st.saving = false
+  }
 }
 
 /** 重置为后端保存的坐标（撤销未保存的拖动） */
@@ -593,6 +811,17 @@ function categoryLabel(v: string | null | undefined) {
           <el-option label="30 秒" :value="30000" />
         </el-select>
       </div>
+      <div class="flex items-center gap-2">
+        <el-tooltip content="开启后拖拽始终吸附到网格；关闭时按住 Shift 临时吸附" placement="top">
+          <el-switch v-model="snapEnabled" active-text="网格吸附" inline-prompt />
+        </el-tooltip>
+        <el-select v-model="snapStep" size="small" class="w-24">
+          <el-option label="10 px" :value="10" />
+          <el-option label="20 px" :value="20" />
+          <el-option label="40 px" :value="40" />
+          <el-option label="80 px" :value="80" />
+        </el-select>
+      </div>
       <div class="flex-1" />
       <div class="flex items-center gap-2">
         <el-button-group>
@@ -620,9 +849,27 @@ function categoryLabel(v: string | null | undefined) {
     <el-empty v-if="!loading && scenes.length === 0" description="尚无启用状态的场景，请先在「场景」Tab 创建" />
 
     <div v-else class="flex flex-col lg:flex-row gap-4">
-      <div class="sandbox-canvas-wrap" :style="canvasWrapStyle">
+      <div class="sandbox-canvas-wrap" :style="canvasWrapStyle" @click.capture="closeCtxMenu">
         <div ref="containerEl" class="sandbox-canvas" />
         <el-skeleton v-if="loading" :rows="8" animated class="sandbox-skeleton" />
+
+        <!-- 节点右键菜单（位置相对画布容器，由 Phaser pointer 坐标给出） -->
+        <div v-if="ctxMenu.visible && ctxMenu.npc" class="sandbox-ctx-menu"
+          :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop @contextmenu.prevent>
+          <div class="sandbox-ctx-menu__title">
+            {{ ctxMenu.npc.npc_name || '未命名' }}
+          </div>
+          <button class="sandbox-ctx-menu__item" @click="openRoleDialog">
+            编辑场景备注（role_note）
+          </button>
+          <button class="sandbox-ctx-menu__item" @click="openMetaDialog">
+            编辑 simulation_meta（JSON）
+          </button>
+          <div class="sandbox-ctx-menu__divider" />
+          <button class="sandbox-ctx-menu__item sandbox-ctx-menu__item--danger" @click="unlinkCurrentNpc">
+            从本场景移除关联
+          </button>
+        </div>
       </div>
 
       <aside class="sandbox-aside flex-1 min-w-0">
@@ -661,9 +908,40 @@ function categoryLabel(v: string | null | undefined) {
     </div>
 
     <p class="text-xs text-[var(--ainpc-muted)] mt-4">
-      交互：<strong>左键</strong>拖拽节点 / <strong>滚轮</strong>缩放 / <strong>右键</strong>拖拽空白处平移；点击「保存布局」将坐标写入
+      交互：<strong>左键</strong>拖拽节点（按 <kbd>Shift</kbd> 临时吸附）/ <strong>右键</strong>节点弹出菜单 /
+      <strong>滚轮</strong>缩放 / <strong>右键拖拽空白处</strong>平移；点击「保存布局」将坐标写入
       <code>scene_npc.pos_x / pos_y</code>。视口 {{ VIEWPORT_W }}×{{ VIEWPORT_H }}；当前世界 {{ worldW }}×{{ worldH }}。
     </p>
+
+    <!-- role_note 编辑对话框 -->
+    <el-dialog v-model="roleDialog.visible" title="编辑场景备注" width="460px" append-to-body>
+      <div class="text-xs text-[var(--ainpc-muted)] mb-2">
+        仅影响本场景中该角色的标注（如「店主」「派对主办」），最多 256 字符。
+      </div>
+      <el-input v-model="roleDialog.text" maxlength="256" show-word-limit
+        :placeholder="roleDialog.npc?.npc_name || ''" />
+      <template #footer>
+        <el-button @click="roleDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="roleDialog.saving" @click="saveRoleNote">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- simulation_meta 编辑对话框 -->
+    <el-dialog v-model="metaDialog.visible" title="编辑 simulation_meta (JSON)" width="620px" append-to-body>
+      <div class="text-xs text-[var(--ainpc-muted)] mb-2">
+        外部仿真回写字段，<strong>自由 JSON 对象</strong>。沙盒气泡优先读取
+        <code>latest_say</code>、其次 <code>latest_action</code>。留空表示清除。
+      </div>
+      <el-input v-model="metaDialog.text" type="textarea" :rows="12" class="font-mono-nums"
+        placeholder='示例: {"latest_say": "欢迎光临", "memory": ["昨天见过主人公"]}' />
+      <div v-if="metaDialog.error" class="text-[var(--el-color-danger)] text-xs mt-2">
+        {{ metaDialog.error }}
+      </div>
+      <template #footer>
+        <el-button @click="metaDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="metaDialog.saving" @click="saveMeta">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -705,5 +983,56 @@ function categoryLabel(v: string | null | undefined) {
 
 .font-mono-nums {
   font-variant-numeric: tabular-nums;
+}
+
+.sandbox-ctx-menu {
+  position: absolute;
+  z-index: 30;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--ainpc-surface, #161b22);
+  border: 1px solid var(--ainpc-border, #30363d);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  user-select: none;
+}
+
+.sandbox-ctx-menu__title {
+  padding: 6px 10px 4px;
+  font-size: 12px;
+  color: var(--ainpc-muted, #8b949e);
+  border-bottom: 1px dashed var(--ainpc-border, #30363d);
+  margin-bottom: 4px;
+}
+
+.sandbox-ctx-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--ainpc-text, #f0f6fc);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.sandbox-ctx-menu__item:hover {
+  background: rgba(88, 166, 255, 0.12);
+}
+
+.sandbox-ctx-menu__item--danger {
+  color: var(--el-color-danger, #e5534b);
+}
+
+.sandbox-ctx-menu__item--danger:hover {
+  background: rgba(229, 83, 75, 0.12);
+}
+
+.sandbox-ctx-menu__divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--ainpc-border, #30363d);
 }
 </style>

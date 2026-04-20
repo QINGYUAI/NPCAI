@@ -42,6 +42,12 @@ export function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
+/** 吸附到网格步长（step>0），并保留小数精度；step<=0 时原样返回 */
+export function snapTo(n: number, step: number) {
+  if (!Number.isFinite(step) || step <= 0) return n
+  return Math.round(n / step) * step
+}
+
 /** 从 simulation_meta 中提取气泡文本（约定字段，非强制） */
 export function extractBubbleText(meta: Record<string, unknown> | null | undefined): string {
   if (!meta || typeof meta !== 'object') return ''
