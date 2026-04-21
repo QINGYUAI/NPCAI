@@ -115,6 +115,23 @@ export type TickEvent =
       bytes: number;
       soft_limit: number;
       at: string;
+    }
+  /**
+   * [M4.2.3.b] 反思生成事件
+   * - 仅在 reflect 节点 status='generated' 时广播（skipped/failed 不广播）
+   * - items 固定 3 条（goal/emotion/relation 各一），content 已被 zod 截到 <=200 字
+   * - reflection_ids 对应 npc_reflection.id，与 items 同下标
+   */
+  | {
+      type: 'reflection.created';
+      scene_id: number;
+      tick: number;
+      npc_id: number;
+      npc_name?: string;
+      items: Array<{ theme: 'goal' | 'emotion' | 'relation'; content: string }>;
+      reflection_ids: number[];
+      source_memory_ids: number[];
+      at: string;
     };
 
 /** 从数据库加载的 NPC 行（推理图节点所需最小集合） */

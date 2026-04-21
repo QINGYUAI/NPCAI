@@ -14,6 +14,8 @@ import { pool } from '../../db/connection.js';
 import { chatCompletion } from '../../utils/llmClient.js';
 import { retrieveMemories } from '../memory/retrieve.js';
 import { storeMemory } from '../memory/store.js';
+import { reflectIfTriggered } from '../reflection/reflect.js';
+import type { ReflectionResult } from '../reflection/types.js';
 import type { NpcRow, SceneRow, SimulationMetaV1 } from '../types.js';
 import {
   buildMemoryBlock,
@@ -49,6 +51,12 @@ export interface GraphOutput {
    * - store 失败不影响此标记（store 失败也降级写 MySQL，不算"retrieve 不可用"）
    */
   memory_degraded?: boolean;
+  /**
+   * [M4.2.3.b] 本 tick 反思节点的结果（仅在周期命中 & live 模式时可能为 'generated'）
+   * - scheduler 根据 status === 'generated' emit reflection.created 事件
+   * - status === 'skipped' / 'failed' 时调度器不广播
+   */
+  reflection?: ReflectionResult;
 }
 
 const planSchema = z
@@ -228,6 +236,22 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     /* memory 失败保留旧值 */
   }
 
+  /**
+   * [M4.2.3.b] reflect 节点：周期命中才做一次；失败/跳过都不阻塞主流程
+   * - 放在 memory-summary 之后：可以拿到本 tick 最新 say/action 已落的 npc_memory
+   * - dryRun=false 由本文件进入 live 分支即天然保证
+   */
+  const reflection = await reflectIfTriggered({
+    scene: input.scene,
+    npc,
+    tick,
+    prevSummary: memorySummary,
+    aiCfg,
+    dryRun: false,
+    signal,
+    onMetrics,
+  });
+
   const nextMeta: SimulationMetaV1 = {
     version: '1.0',
     last_tick_at: new Date().toISOString(),
@@ -241,6 +265,11 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
       tick,
       node_retry: { plan: planResult ? 0 : 1 },
       memory: { retrieved: retrieveResult.entries.length, degraded: retrieveResult.degraded },
+      reflection: {
+        status: reflection.status,
+        ids: reflection.reflection_ids,
+        source_ids: reflection.source_memory_ids,
+      },
     },
   };
 
@@ -250,6 +279,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     tokens: tickMetrics.tokens,
     cost_usd: tickMetrics.costKnown ? tickMetrics.cost : 0,
     memory_degraded: retrieveResult.degraded,
+    reflection,
   };
 }
 

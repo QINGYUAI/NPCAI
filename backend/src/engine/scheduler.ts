@@ -284,6 +284,25 @@ export class SceneScheduler {
           this.memoryDegradedAt = Date.now();
         }
 
+        /**
+         * [M4.2.3.b] reflection 生成事件：仅 status='generated' 时广播
+         * - UI 据此在时间线/徽章实时显示（不等轮询）
+         * - skipped/failed 不广播，避免噪音
+         */
+        if (result.reflection && result.reflection.status === 'generated') {
+          bus.emitEvent({
+            type: 'reflection.created',
+            scene_id: this.scene_id,
+            tick: tickNo,
+            npc_id: npc.id,
+            npc_name: npc.name,
+            items: result.reflection.items,
+            reflection_ids: result.reflection.reflection_ids,
+            source_memory_ids: result.reflection.source_memory_ids,
+            at: new Date().toISOString(),
+          });
+        }
+
         const metaStr = serializeMeta(result.nextMeta);
         if (metaStr.byteLength > META_HARD_BYTES) {
           throw new Error(`simulation_meta 超过硬阈值 ${META_HARD_BYTES} 字节`);
