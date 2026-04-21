@@ -53,6 +53,12 @@ export interface ReflectInput {
   };
   /** dry_run 下恒为 skipped，不调用 LLM */
   dryRun: boolean;
+  /**
+   * [M4.2.3.c] 强制触发（POST /api/engine/reflect 手动触发场景）
+   * - true：忽略 tick % everyN / everyN=0 / dryRun 三大周期判定
+   * - 仍保留「最近记忆为空 → skipped」兜底（LLM 没上下文瞎编没意义）
+   */
+  force?: boolean;
   signal?: AbortSignal;
   onMetrics?: (m: { total_tokens: number; cost_usd: number | null }) => void;
 }
@@ -83,12 +89,19 @@ const FAILED: ReflectionResult = {
  */
 export async function reflectIfTriggered(input: ReflectInput): Promise<ReflectionResult> {
   if (input.signal?.aborted) return SKIPPED;
-  if (input.dryRun) return SKIPPED;
 
   const cfg = getMemoryConfig();
-  const everyN = cfg.reflection.everyNTick;
-  if (everyN <= 0) return SKIPPED;
-  if (input.tick <= 0 || input.tick % everyN !== 0) return SKIPPED;
+
+  /**
+   * force 路径（M4.2.3.c 手动 API）：跳过 dryRun / everyN / tick 周期三大判定
+   * - 但仍受下方「最近记忆为空 → SKIPPED」保护
+   */
+  if (!input.force) {
+    if (input.dryRun) return SKIPPED;
+    const everyN = cfg.reflection.everyNTick;
+    if (everyN <= 0) return SKIPPED;
+    if (input.tick <= 0 || input.tick % everyN !== 0) return SKIPPED;
+  }
 
   /** 拉最近 K 条 memory；为空即 skipped（避免 LLM 空上下文瞎编） */
   const memories = await fetchRecentMemoriesSafe(input.npc.id, cfg.reflection.recentMemoryK);

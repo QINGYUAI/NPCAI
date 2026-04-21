@@ -15,6 +15,7 @@ import type {
   WsTickStartMsg,
   WsErrorMsg,
 } from '../types/engine.js'
+import type { ReflectApiResp, WsReflectionCreatedMsg } from '../types/reflection.js'
 
 export function startEngine(params: StartEngineParams) {
   return api.post<ApiResponse<EngineStatus>>('/engine/start', params)
@@ -39,6 +40,16 @@ export function getEngineTicks(params: {
   order?: 'asc' | 'desc'
 }) {
   return api.get<ApiResponse<TickLogRow[]>>('/engine/ticks', { params })
+}
+
+/**
+ * [M4.2.3.c] POST /api/engine/reflect
+ * 手动触发某 NPC 的一次反思（同步返回；会阻塞 25~40s 等 LLM）
+ * - 成功（status=generated）会额外通过 WS 推 reflection.created 给 Sandbox 徽章 +1
+ * - status=failed / skipped 时 HTTP 仍为 200，看 data.status 区分
+ */
+export function reflectOnce(params: { scene_id: number; npc_id: number }) {
+  return api.post<ApiResponse<ReflectApiResp>>('/engine/reflect', params)
 }
 
 /**
@@ -69,6 +80,8 @@ export interface EngineWsHandlers {
   onTickEnd?: (e: WsTickEndMsg) => void
   onError?: (e: WsErrorMsg) => void
   onMetaWarn?: (e: WsMetaWarnMsg) => void
+  /** [M4.2.3.c] 反思生成事件；仅 status='generated' 时后端会推 */
+  onReflection?: (e: WsReflectionCreatedMsg) => void
   onConnectionChange?: (state: WsConnectionState) => void
 }
 
@@ -154,6 +167,7 @@ export function openEngineWs(
         case 'tick.end': handlers.onTickEnd?.(msg); return
         case 'error': handlers.onError?.(msg); return
         case 'meta.warn': handlers.onMetaWarn?.(msg); return
+        case 'reflection.created': handlers.onReflection?.(msg); return
         default: return
       }
     })

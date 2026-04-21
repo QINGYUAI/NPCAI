@@ -22,6 +22,7 @@ import {
   stepEngine,
   getEngineStatus,
   openEngineWs,
+  reflectOnce,
 } from '../api/engine'
 import type {
   EngineStatus,
@@ -34,7 +35,9 @@ import type {
 } from '../types/engine'
 import type { Scene, SceneDetail, SceneNpcLink } from '../types/scene'
 import type { TimelineTickRow, TimelineNpcEntry } from '../types/timeline'
+import type { ReflectionRingEntry, WsReflectionCreatedMsg } from '../types/reflection'
 import SandboxTimeline from './SandboxTimeline.vue'
+import SandboxReflections from './SandboxReflections.vue'
 import { NPC_CATEGORIES } from '../constants/npc'
 import { resolveAvatarUrl } from '../utils/avatar'
 import {
@@ -117,11 +120,25 @@ function onWindowResize() {
 /** panel 模式下时间线面板是否折叠（由顶栏累计标签切换） */
 const timelinePanelCollapsed = ref(false)
 
+/**
+ * [M4.2.3.c] 反思 ring buffer：最多 20 条，来源于 WS `reflection.created`
+ * - key 使用 reflection_ids[0]（同一次反思 3 条共享），防止重复 push（WS 重连再推同事件时）
+ * - 切场景 / 组件卸载清空
+ */
+const REFLECTION_MAX = 20
+const reflectionEntries = ref<ReflectionRingEntry[]>([])
+const reflectionDrawerVisible = ref(false)
+/** 手动反思按钮 loading；key = npc_id 以允许多 NPC 并发（虽然后端是同步，但前端不做互斥更好） */
+const reflectingNpcs = ref<Set<number>>(new Set())
+
 function resetTimeline() {
   timelineEntries.value = []
   sessionTokens.value = 0
   sessionCostUsd.value = 0
   timelineDrawerVisible.value = false
+  reflectionEntries.value = []
+  reflectionDrawerVisible.value = false
+  reflectingNpcs.value = new Set()
 }
 
 /** 顶栏累计标签展示：$ 保留 4 位；未知（null）降级为 `$?` */
@@ -134,6 +151,78 @@ function fmtSessionCost(v: number | null): string {
 /** tokens 简写：≥10k → "1.2k"，否则原值 */
 function fmtTokensShort(n: number): string {
   return n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+}
+
+/**
+ * [M4.2.3.c] WS reflection.created → 压入 ring buffer（去重：同 key 覆盖最新一条）
+ * - 兼容 WS 重连期间可能的重推；UI 感受：徽章不会连续 +1
+ */
+function applyWsReflection(msg: WsReflectionCreatedMsg) {
+  const key = msg.reflection_ids?.[0]
+  if (!key) return
+  const entry: ReflectionRingEntry = {
+    key,
+    scene_id: msg.scene_id,
+    npc_id: msg.npc_id,
+    npc_name: msg.npc_name || `NPC#${msg.npc_id}`,
+    tick: msg.tick,
+    items: msg.items,
+    reflection_ids: msg.reflection_ids,
+    source_memory_ids: msg.source_memory_ids,
+    received_at: msg.ts || msg.at,
+  }
+  const list = reflectionEntries.value.slice().filter((e) => e.key !== key)
+  list.push(entry)
+  if (list.length > REFLECTION_MAX) list.splice(0, list.length - REFLECTION_MAX)
+  reflectionEntries.value = list
+}
+
+/** [M4.2.3.c] 手动触发某 NPC 的反思（右键菜单入口） */
+async function triggerManualReflect(npc: { npc_id: number; npc_name?: string }) {
+  if (!activeSceneId.value) return
+  if (reflectingNpcs.value.has(npc.npc_id)) return
+  const next = new Set(reflectingNpcs.value)
+  next.add(npc.npc_id)
+  reflectingNpcs.value = next
+  const npcName = npc.npc_name || `NPC#${npc.npc_id}`
+  const notify = toast.loading(`${npcName} 反思中，预计 25~40 秒…`, { autoClose: false })
+  try {
+    const resp = await reflectOnce({ scene_id: activeSceneId.value, npc_id: npc.npc_id })
+    const data = resp.data?.data
+    toast.update(notify, {
+      render:
+        data?.status === 'generated'
+          ? `${npcName} 已生成 ${data.items.length} 条反思`
+          : data?.status === 'skipped'
+            ? `${npcName} 反思跳过：最近记忆不足`
+            : `${npcName} 反思生成失败（见后端日志）`,
+      type: data?.status === 'generated' ? 'success' : data?.status === 'skipped' ? 'info' : 'error',
+      isLoading: false,
+      autoClose: 3500,
+    })
+    if (data?.status === 'generated') {
+      reflectionDrawerVisible.value = true
+    }
+  } catch (e) {
+    toast.update(notify, {
+      render: `反思触发失败：${(e as Error).message || '未知错误'}`,
+      type: 'error',
+      isLoading: false,
+      autoClose: 4000,
+    })
+  } finally {
+    const back = new Set(reflectingNpcs.value)
+    back.delete(npc.npc_id)
+    reflectingNpcs.value = back
+  }
+}
+
+/** [M4.2.3.c] 顶栏反思徽章点击：开关抽屉；长按/右键可清空（此处用抽屉内的「清空」按钮） */
+function onReflectionPillClick() {
+  reflectionDrawerVisible.value = !reflectionDrawerVisible.value
+}
+function clearReflections() {
+  reflectionEntries.value = []
 }
 
 /**
@@ -547,6 +636,7 @@ function startEngineObserver() {
     onNpcUpdated: (msg) => applyWsNpcUpdated(msg),
     onTickEnd: (msg) => applyWsTickEnd(msg),
     onMetaWarn: (msg) => applyWsMetaWarn(msg),
+    onReflection: (msg) => applyWsReflection(msg),
     onError: (msg) => {
       if (engineStatus.value) {
         engineStatus.value = {
@@ -1287,6 +1377,14 @@ function categoryLabel(v: string | null | undefined) {
             Σ {{ fmtSessionCost(sessionCostUsd) }} · {{ fmtTokensShort(sessionTokens) }}tok
           </el-tag>
         </el-tooltip>
+        <!-- [M4.2.3.c] 反思徽章：WS reflection.created 事件 +1，点击展开抽屉 -->
+        <el-tooltip placement="bottom"
+          content="本会话反思条数（每次触发 3 条主题，同组合并为 1）。tick 为 REFLECT_EVERY_N_TICK 倍数时自动触发；也可在右键菜单手动触发">
+          <el-tag size="small" type="warning" effect="plain" class="reflection-pill"
+            @click="onReflectionPillClick">
+            🧘 {{ reflectionEntries.length }}
+          </el-tag>
+        </el-tooltip>
       </div>
       <div class="flex-1" />
       <div class="flex items-center gap-2">
@@ -1339,6 +1437,18 @@ function categoryLabel(v: string | null | undefined) {
           </button>
           <button class="sandbox-ctx-menu__item" @click="openMetaDialog">
             编辑 simulation_meta（JSON）
+          </button>
+          <div class="sandbox-ctx-menu__divider" />
+          <!-- [M4.2.3.c] 手动触发该 NPC 一次反思（忽略周期） -->
+          <button
+            class="sandbox-ctx-menu__item"
+            :disabled="!ctxMenu.npc || reflectingNpcs.has(ctxMenu.npc.npc_id)"
+            @click="ctxMenu.npc && (triggerManualReflect({
+              npc_id: ctxMenu.npc.npc_id,
+              npc_name: ctxMenu.npc.npc_name,
+            }), closeCtxMenu())"
+          >
+            {{ ctxMenu.npc && reflectingNpcs.has(ctxMenu.npc.npc_id) ? '反思中…' : '手动触发反思' }}
           </button>
           <div class="sandbox-ctx-menu__divider" />
           <button class="sandbox-ctx-menu__item sandbox-ctx-menu__item--danger" @click="unlinkCurrentNpc">
@@ -1402,6 +1512,13 @@ function categoryLabel(v: string | null | undefined) {
       :total-tokens="sessionTokens"
       :total-cost="sessionCostUsd"
       v-model:visible="timelineDrawerVisible"
+    />
+
+    <!-- [M4.2.3.c] 反思抽屉：宽屏/小屏共用，徽章或右键成功回调打开 -->
+    <SandboxReflections
+      :entries="reflectionEntries"
+      v-model:visible="reflectionDrawerVisible"
+      @clear="clearReflections"
     />
 
     <p class="text-xs text-[var(--ainpc-muted)] mt-4">
@@ -1532,6 +1649,16 @@ function categoryLabel(v: string | null | undefined) {
   user-select: none;
 }
 .session-sum-pill:hover {
+  filter: brightness(1.15);
+}
+/** [M4.2.3.c] 反思徽章：与 session-sum-pill 风格一致，warning 色区分 */
+.reflection-pill {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  margin-left: 2px;
+}
+.reflection-pill:hover {
   filter: brightness(1.15);
 }
 @keyframes meta-warn-flash {
