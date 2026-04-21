@@ -4,6 +4,7 @@
  */
 import { PROVIDER_BASE_URLS } from './providerDefaults.js';
 import { logAiCall } from './aiLogger.js';
+import { calcCostUsd, countTokens } from '../engine/tokenCounter.js';
 
 export interface LlmConfig {
   api_key: string
@@ -20,6 +21,21 @@ export interface LogContext {
   context?: Record<string, unknown>
 }
 
+/**
+ * [M4.2.1.a] 单次 LLM 调用的观测指标
+ * - prompt_tokens/completion_tokens 优先取 provider usage；provider 未回传时用 tiktoken 本地估算
+ * - cost_usd：硬编码单价表计算；未匹配模型为 null
+ * - 通过 chatCompletion options.onMetrics 回调，给 graph/scheduler 聚合到 tick 粒度
+ */
+export interface LlmMetrics {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cost_usd: number | null
+  /** 'usage' = provider 原生 usage；'estimate' = tiktoken 本地估算 */
+  tokens_source: 'usage' | 'estimate'
+}
+
 /** 视觉 API 支持：content 可为 string 或多模态内容块 */
 type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
 type MessageContent = string | ContentPart[];
@@ -33,7 +49,13 @@ type MessageContent = string | ContentPart[];
 export async function chatCompletion(
   config: LlmConfig,
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: MessageContent }>,
-  options?: { timeout?: number; max_tokens?: number; logContext?: LogContext }
+  options?: {
+    timeout?: number;
+    max_tokens?: number;
+    logContext?: LogContext;
+    /** [M4.2.1.a] 成功返回后回调本次调用的 tokens/cost，供上层按 tick 聚合 */
+    onMetrics?: (m: LlmMetrics) => void;
+  }
 ): Promise<string> {
   const { api_key, base_url, provider, model } = config
   if (!api_key?.trim()) {
@@ -98,12 +120,16 @@ export async function chatCompletion(
     throw new Error(errMsg)
   }
 
-  const json = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const json = (await resp.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  }
   const content = json.choices?.[0]?.message?.content?.trim() || ''
+  const serializeContent = (c: MessageContent) =>
+    typeof c === 'string' ? c : c.map((p) => (p.type === 'text' ? p.text : '[image]')).join('\n');
+  const requestContent = messages.map((m) => `[${m.role}]: ${serializeContent(m.content)}`).join('\n---\n');
+
   if (!content) {
-    const serializeContent = (c: MessageContent) =>
-      typeof c === 'string' ? c : c.map((p) => (p.type === 'text' ? p.text : '[image]')).join('\n');
-    const requestContent = messages.map((m) => `[${m.role}]: ${serializeContent(m.content)}`).join('\n---\n');
     logAiCall({
       api_type: 'chat',
       provider,
@@ -120,15 +146,26 @@ export async function chatCompletion(
     throw new Error('模型返回为空')
   }
 
-  const serializeContent = (c: MessageContent) =>
-    typeof c === 'string' ? c : c.map((p) => (p.type === 'text' ? p.text : '[image]')).join('\n');
-  const requestContent = messages.map((m) => `[${m.role}]: ${serializeContent(m.content)}`).join('\n---\n');
+  /** [M4.2.1.a] 计费：优先用 provider usage；缺字段时用 tiktoken 本地估算（tokens_source 做标记） */
+  const usage = json.usage || {}
+  let promptTokens = Number.isFinite(usage.prompt_tokens) ? Number(usage.prompt_tokens) : 0
+  let completionTokens = Number.isFinite(usage.completion_tokens) ? Number(usage.completion_tokens) : 0
+  let tokensSource: 'usage' | 'estimate' = promptTokens > 0 || completionTokens > 0 ? 'usage' : 'estimate'
+  if (tokensSource === 'estimate') {
+    promptTokens = countTokens(body.model, requestContent)
+    completionTokens = countTokens(body.model, content)
+  }
+  const totalTokens = Number.isFinite(usage.total_tokens)
+    ? Number(usage.total_tokens)
+    : promptTokens + completionTokens
+  const costUsd = calcCostUsd(body.model, promptTokens, completionTokens)
+
   logAiCall({
     api_type: 'chat',
     provider,
     model: model || undefined,
     request_info: { message_count: messages.length },
-    response_info: { output_length: content.length },
+    response_info: { output_length: content.length, tokens_source: tokensSource },
     request_content: requestContent,
     response_content: content,
     duration_ms: duration,
@@ -136,7 +173,26 @@ export async function chatCompletion(
     source: logCtx?.source,
     ai_config_id: logCtx?.ai_config_id,
     context: logCtx?.context,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+    cost_usd: costUsd,
   })
+
+  if (options?.onMetrics) {
+    try {
+      options.onMetrics({
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: totalTokens,
+        cost_usd: costUsd,
+        tokens_source: tokensSource,
+      })
+    } catch (e) {
+      console.warn('[llmClient] onMetrics 回调异常（已忽略）:', (e as Error)?.message)
+    }
+  }
+
   return content
 }
 

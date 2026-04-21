@@ -35,9 +35,9 @@ export interface GraphOutput {
   inputSummary: string;
   cost_usd?: number;
   /**
-   * [M4.2.0] 本 tick 对该 NPC 的总 token 消耗（prompt+completion）
-   * - dry_run / M4.2.0 暂为 0；M4.2.1 接入 tiktoken 后真实填写
-   * - scheduler 会据此 + ai_config.budget_tokens_per_tick 在下一 tick 执行 budget 判定
+   * [M4.2.1.a] 本 tick 对该 NPC 的总 token 消耗（plan+speak+memory 三节点聚合）
+   * - dry_run 仍为 0；live 路径从 chatCompletion.onMetrics 回调累加得到
+   * - scheduler 据此 + ai_config.budget_tokens_per_tick 在下一 tick 执行 budget 判定
    */
   tokens?: number;
 }
@@ -93,6 +93,20 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
   const aiCfg = await loadAiConfig(npc.ai_config_id);
   const prevMeta = parseMeta(npc.simulation_meta);
 
+  /**
+   * [M4.2.1.a] tick 粒度的 metrics 累加器
+   * - 被 callWithRetry -> chatCompletion.onMetrics 回调追加
+   * - 成功与失败（HTTP 200 但 JSON 校验失败重试）均会累加，保证预算硬度
+   */
+  const tickMetrics = { tokens: 0, cost: 0, costKnown: false };
+  const onMetrics = (m: { total_tokens: number; cost_usd: number | null }) => {
+    tickMetrics.tokens += m.total_tokens;
+    if (m.cost_usd != null) {
+      tickMetrics.cost += m.cost_usd;
+      tickMetrics.costKnown = true;
+    }
+  };
+
   /** plan 节点 */
   const planPrompt = buildPlanPrompt({
     scene: input.scene,
@@ -108,6 +122,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     planSchema,
     { source: 'engine.plan', ai_config_id: npc.ai_config_id, context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'plan' } },
     signal,
+    onMetrics,
   );
 
   /** speak 节点：plan 失败则用兜底计划 */
@@ -120,6 +135,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     speakSchema,
     { source: 'engine.speak', ai_config_id: npc.ai_config_id, context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'speak' } },
     signal,
+    onMetrics,
   );
 
   if (!speakResult) {
@@ -143,6 +159,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
       memorySchema,
       { source: 'engine.memory', ai_config_id: npc.ai_config_id, context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'memory' } },
       signal,
+      onMetrics,
     );
     if (memResult) memorySummary = memResult.memory_summary;
   } catch {
@@ -160,7 +177,12 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     debug: { live: true, tick, node_retry: { plan: planResult ? 0 : 1 } },
   };
 
-  return { nextMeta, inputSummary };
+  return {
+    nextMeta,
+    inputSummary,
+    tokens: tickMetrics.tokens,
+    cost_usd: tickMetrics.costKnown ? tickMetrics.cost : 0,
+  };
 }
 
 /** dry_run 路径：保持与 M4.1.a 一致的确定性伪输出 */
@@ -192,6 +214,8 @@ async function callWithRetry<T>(
   schema: z.ZodSchema<T>,
   logCtx: { source: string; ai_config_id?: number; context?: Record<string, unknown> },
   signal?: AbortSignal,
+  /** [M4.2.1.a] 无论 JSON 校验是否成功，只要 provider 真实返回 200 就累加 tokens/cost */
+  onMetrics?: (m: { total_tokens: number; cost_usd: number | null }) => void,
 ): Promise<T | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     if (signal?.aborted) throw new Error('aborted');
@@ -215,6 +239,7 @@ async function callWithRetry<T>(
             ai_config_id: logCtx.ai_config_id,
             context: { ...(logCtx.context || {}), attempt },
           },
+          onMetrics,
         },
       );
       const parsed = parseJsonRobust(content);

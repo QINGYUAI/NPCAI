@@ -47,9 +47,9 @@ export class SceneScheduler {
   /** [M4.2.0] 最近 N 条 simulation_meta 软阈值越界告警（滚动窗口） */
   private metaWarns: MetaWarn[] = [];
   /**
-   * [M4.2.0] 每个 NPC 上一 tick 的真实 token 总消耗（prompt+completion）
-   * - 数据来源：M4.2.1 真实 token 记账完成后，由 tick 末尾统计写入
-   * - M4.2.0 暂时保持为空，budget skip 路径存在但不会触发（兼容开发）
+   * [M4.2.0 → M4.2.1.a] 每个 NPC 上一 tick 的真实 token 总消耗（prompt+completion）
+   * - 数据来源：runGraph().tokens（M4.2.1.a 起接 chatCompletion.onMetrics 真实值）
+   * - 下一 tick 开始前与 ai_config.budget_tokens_per_tick 比较；超支即写 skipped
    */
   private lastTickTokensByNpc: Map<number, number> = new Map();
   /** 允许硬停时中断正在进行的推理 */
@@ -251,7 +251,7 @@ export class SceneScheduler {
           signal,
         });
         this.costUsdTotal += result.cost_usd || 0;
-        /** [M4.2.0] 记录 tokens 供下一 tick budget 判定；dry_run / M4.2.0 为 0 */
+        /** [M4.2.1.a] 记录真实 tokens 供下一 tick budget 判定；dry_run 仍为 0 */
         this.lastTickTokensByNpc.set(npc.id, Number(result.tokens ?? 0));
 
         const metaStr = serializeMeta(result.nextMeta);

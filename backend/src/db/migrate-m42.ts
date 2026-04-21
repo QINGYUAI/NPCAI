@@ -4,8 +4,9 @@
  *
  * 覆盖范围（随子里程碑逐步扩充）：
  *   - [M4.2.0] ai_config.budget_tokens_per_tick —— 每 NPC 每 tick token 预算
+ *   - [M4.2.1.a] ai_call_log.prompt_tokens / completion_tokens / total_tokens / cost_usd
  *
- * 后续 M4.2.1 ~ M4.2.4 会在这里继续追加（ai_call_log tokens、npc_memory、npc_reflection、scene_event 等）
+ * 后续 M4.2.2 ~ M4.2.4 会在这里继续追加（npc_memory、npc_reflection、scene_event 等）
  */
 import 'dotenv/config';
 import mysql, { type RowDataPacket } from 'mysql2/promise';
@@ -46,6 +47,39 @@ async function migrate() {
     console.log('✅ ai_config.budget_tokens_per_tick 已新增');
   } else {
     console.log('⏭  ai_config.budget_tokens_per_tick 已存在，跳过');
+  }
+
+  /** M4.2.1.a：ai_call_log 追加 tokens / cost 列（真实观测性计费） */
+  const aiCallLogCols: Array<{ name: string; ddl: string; comment: string }> = [
+    { name: 'prompt_tokens', ddl: 'INT DEFAULT NULL', comment: '[M4.2.1.a] 输入 tokens（来自 provider usage 或本地 tiktoken 估算）' },
+    { name: 'completion_tokens', ddl: 'INT DEFAULT NULL', comment: '[M4.2.1.a] 输出 tokens' },
+    { name: 'total_tokens', ddl: 'INT DEFAULT NULL', comment: '[M4.2.1.a] 总 tokens = prompt + completion' },
+    { name: 'cost_usd', ddl: 'DECIMAL(10,6) DEFAULT NULL', comment: '[M4.2.1.a] 本次调用费用（美元，硬编码单价表换算；未匹配模型为 NULL）' },
+  ];
+  for (const col of aiCallLogCols) {
+    if (!(await hasColumn(conn, dbName, 'ai_call_log', col.name))) {
+      await conn.query(
+        `ALTER TABLE ai_call_log
+           ADD COLUMN ${col.name} ${col.ddl}
+           COMMENT ${JSON.stringify(col.comment)}`,
+      );
+      console.log(`✅ ai_call_log.${col.name} 已新增`);
+    } else {
+      console.log(`⏭  ai_call_log.${col.name} 已存在，跳过`);
+    }
+  }
+
+  /** M4.2.1.a：ai_call_log 补一个 (source, created_at) 复合索引，scheduler 按 tick 聚合时更快 */
+  const [idxRows] = await conn.query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS c FROM information_schema.STATISTICS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'ai_call_log' AND INDEX_NAME = 'idx_source_created'`,
+    [dbName],
+  );
+  if (Number((idxRows[0] as { c?: number } | undefined)?.c ?? 0) === 0) {
+    await conn.query('ALTER TABLE ai_call_log ADD INDEX idx_source_created (source, created_at)');
+    console.log('✅ ai_call_log.idx_source_created 已创建');
+  } else {
+    console.log('⏭  ai_call_log.idx_source_created 已存在，跳过');
   }
 
   await conn.end();

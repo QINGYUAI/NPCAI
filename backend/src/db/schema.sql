@@ -93,11 +93,17 @@ CREATE TABLE IF NOT EXISTS ai_call_log (
   error_message TEXT DEFAULT NULL COMMENT '错误信息',
   source VARCHAR(64) DEFAULT NULL COMMENT '调用来源',
   context JSON DEFAULT NULL COMMENT '扩展上下文',
+  -- [M4.2.1.a] 真实 tokens / cost 观测字段；与 scheduler.lastTickTokensByNpc 和前端时间线对接
+  prompt_tokens INT DEFAULT NULL COMMENT '[M4.2.1.a] 输入 tokens（provider usage 或 tiktoken 估算）',
+  completion_tokens INT DEFAULT NULL COMMENT '[M4.2.1.a] 输出 tokens',
+  total_tokens INT DEFAULT NULL COMMENT '[M4.2.1.a] 总 tokens',
+  cost_usd DECIMAL(10,6) DEFAULT NULL COMMENT '[M4.2.1.a] 本次调用费用（美元；未匹配模型为 NULL）',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_created (created_at),
   INDEX idx_api_type (api_type),
   INDEX idx_status (status),
   INDEX idx_ai_config (ai_config_id),
+  INDEX idx_source_created (source, created_at),
   FOREIGN KEY (ai_config_id) REFERENCES ai_config(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI接口调用日志表';
 

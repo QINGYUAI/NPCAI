@@ -4,6 +4,7 @@
 |---------|------|------|
 | 0.1 | 2026-04-21 | 初稿：M4.2 roadmap v0.3 里 M4.2.1 观测性（WebSocket + tokens/cost 真实化 + tick 时间线浮窗）的工程落地规格；**待评审** |
 | 0.2 | 2026-04-21 | **首轮评审通过**（见 §10.0）：Tokenizer = **`tiktoken` (wasm)**；浮窗 = **P1 右侧独立列**；WS = **`ws` 复用 express**；单价表 = **硬编码**；**3 个 commit** 分拆。§12 原「明确不做」保留但降级为「**后续扩展点**」（需求入档，不进本节点）。下一步：**开始 M4.2.1.a** |
+| 0.3 | 2026-04-21 | **✅ M4.2.1.a 后端计费完成**：`ai_call_log` 扩 4 列（prompt/completion/total_tokens、cost_usd）+ `(source,created_at)` 复合索引；新增 `engine/tokenCounter.ts`（tiktoken + 硬编码单价表 + `COST_ACCOUNTING_ENABLED` 开关）；`llmClient.chatCompletion` 采集 provider usage / 本地估算双路径，`onMetrics` 回调；`graph/build.ts` tick 粒度累加 `tokens` + `cost_usd`；`scheduler.lastTickTokensByNpc` 接入真实值（M4.2.0 占位到此**真正生效**）；新增 11 条单测（tokenCounter 8 + llmClient 3），后端 **41/41 全绿** + tsc build 通过。下一步：**M4.2.1.b WebSocket 推送** |
 
 > 关联：[`m4.2-roadmap.md`](./m4.2-roadmap.md) §4.1 / §5.2 / §5.3 / §6；[`engine-integration-m4.1.md`](./engine-integration-m4.1.md)。
 > **本文档只定义工程规格，不修改任何已交付代码。**
