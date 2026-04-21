@@ -5,6 +5,8 @@
 import { PROVIDER_BASE_URLS } from './providerDefaults.js';
 import { logAiCall } from './aiLogger.js';
 import { calcCostUsd, countTokens } from '../engine/tokenCounter.js';
+import { getMemoryConfig } from '../engine/memory/config.js';
+import { EmbedCache, getEmbedCache } from './embedCache.js';
 
 export interface LlmConfig {
   api_key: string
@@ -309,25 +311,64 @@ export async function* chatCompletionStream(
 }
 
 /**
- * 文本向量化（OpenAI Embeddings 兼容接口）
- * 用于记忆的语义检索
+ * [M4.2.2] embedText 返回结构体
+ * - vector：向量本体；dim 与 MEMORY_EMBED_DIM / QDRANT_VECTOR_SIZE 严格一致
+ * - model：实际请求的 embedding 模型（供 npc_memory.embed_model 落库）
+ * - cached：本次是否命中磁盘/内存缓存；true 则未产生新的 ai_call_log
+ */
+export interface EmbedResult {
+  vector: number[]
+  model: string
+  cached: boolean
+}
+
+/**
+ * [M4.2.2] 文本向量化（OpenAI Embeddings 兼容接口）
+ *
+ * 变更（vs M-1）
+ * - model 可覆写；缺省读 MEMORY_EMBED_MODEL
+ * - 默认开启磁盘缓存（sha1(model+text) 作 key，30 天 TTL）
+ * - 返回结构体 { vector, model, cached }
+ * - 命中缓存时不再写 ai_call_log，也不消耗配额
+ *
+ * @param config NPC 对应 ai_config（api_key/base_url/provider）
+ * @param text   待向量化文本（>8000 字会截断，与 M-1 行为一致）
  */
 export async function embedText(
   config: { api_key: string; base_url?: string | null; provider: string },
   text: string,
-  options?: { timeout?: number; logContext?: LogContext }
-): Promise<number[]> {
+  options?: {
+    timeout?: number
+    logContext?: LogContext
+    model?: string
+    useCache?: boolean
+  },
+): Promise<EmbedResult> {
   const { api_key, base_url, provider } = config
   if (!api_key?.trim()) throw new Error('未设置 API Key')
+
+  const memCfg = getMemoryConfig()
+  const model = options?.model || memCfg.embedModel
+  const useCache = options?.useCache !== false && memCfg.embedCache.enabled
+
+  const input = text.slice(0, 8000)
+  const inputLen = input.length
+
+  if (useCache) {
+    const cache = getEmbedCache({
+      dir: memCfg.embedCache.dir,
+      ttlDays: memCfg.embedCache.ttlDays,
+    })
+    const hit = await cache.get(model, input)
+    if (hit) {
+      return { vector: hit, model, cached: true }
+    }
+  }
 
   const base = (base_url && base_url.trim()) || PROVIDER_BASE_URLS[provider] || 'https://api.openai.com/v1'
   const url = base.replace(/\/$/, '') + '/embeddings'
 
-  const inputLen = Math.min(text.length, 8000)
-  const body = {
-    model: 'text-embedding-3-small',
-    input: text.slice(0, 8000),
-  }
+  const body = { model, input }
 
   const start = Date.now()
   const logCtx = options?.logContext
@@ -344,16 +385,15 @@ export async function embedText(
   clearTimeout(timer)
   const duration = Date.now() - start
 
-  const inputText = text.slice(0, 8000);
   if (!resp.ok) {
     const errText = await resp.text()
     const errMsg = errText.slice(0, 300) || `HTTP ${resp.status}`
     logAiCall({
       api_type: 'embed',
       provider,
-      model: 'text-embedding-3-small',
+      model,
       request_info: { input_length: inputLen },
-      request_content: inputText,
+      request_content: input,
       duration_ms: duration,
       status: 'error',
       error_message: errMsg,
@@ -370,9 +410,9 @@ export async function embedText(
     logAiCall({
       api_type: 'embed',
       provider,
-      model: 'text-embedding-3-small',
+      model,
       request_info: { input_length: inputLen },
-      request_content: inputText,
+      request_content: input,
       duration_ms: duration,
       status: 'error',
       error_message: 'Embedding 返回格式异常',
@@ -383,13 +423,31 @@ export async function embedText(
     throw new Error('Embedding 返回格式异常')
   }
 
+  if (embedding.length !== memCfg.embedDim) {
+    const msg = `Embedding 维度 ${embedding.length} 与 MEMORY_EMBED_DIM=${memCfg.embedDim} 不一致`
+    logAiCall({
+      api_type: 'embed',
+      provider,
+      model,
+      request_info: { input_length: inputLen },
+      request_content: input,
+      duration_ms: duration,
+      status: 'error',
+      error_message: msg,
+      source: logCtx?.source,
+      ai_config_id: logCtx?.ai_config_id,
+      context: logCtx?.context,
+    })
+    throw new Error(msg)
+  }
+
   logAiCall({
     api_type: 'embed',
     provider,
-    model: 'text-embedding-3-small',
+    model,
     request_info: { input_length: inputLen },
     response_info: { embedding_dim: embedding.length },
-    request_content: inputText,
+    request_content: input,
     response_content: `[向量维度: ${embedding.length}]`,
     duration_ms: duration,
     status: 'success',
@@ -397,8 +455,20 @@ export async function embedText(
     ai_config_id: logCtx?.ai_config_id,
     context: logCtx?.context,
   })
-  return embedding
+
+  if (useCache) {
+    const cache = getEmbedCache({
+      dir: memCfg.embedCache.dir,
+      ttlDays: memCfg.embedCache.ttlDays,
+    })
+    await cache.set(model, input, embedding)
+  }
+
+  return { vector: embedding, model, cached: false }
 }
+
+// 为方便外部（测试）按 key 复算，导出哈希函数
+export { EmbedCache } from './embedCache.js'
 
 /** 余弦相似度 */
 export function cosineSimilarity(a: number[], b: number[]): number {

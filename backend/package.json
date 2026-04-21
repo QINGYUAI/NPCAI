@@ -14,11 +14,14 @@
     "db:migrate-scene": "tsx src/db/migrate-scene.ts",
     "db:migrate-engine": "tsx src/db/migrate-engine.ts",
     "db:migrate-m42": "tsx src/db/migrate-m42.ts",
+    "db:migrate:m422": "tsx src/db/migrate-m422.ts",
+    "qdrant:init": "tsx scripts/qdrant-init.ts",
     "smoke:engine": "tsx scripts/smoke-engine.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@qdrant/js-client-rest": "^1.17.0",
     "@types/multer": "^2.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

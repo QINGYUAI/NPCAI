@@ -125,3 +125,23 @@ CREATE TABLE IF NOT EXISTS npc_tick_log (
   CONSTRAINT fk_tick_scene FOREIGN KEY (scene_id) REFERENCES scene(id) ON DELETE CASCADE,
   CONSTRAINT fk_tick_npc FOREIGN KEY (npc_id) REFERENCES npc(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='NPC 单步决策归档';
+
+-- [M4.2.2] NPC 长期记忆元数据（向量实体在 Qdrant；id 对齐 point_id）
+CREATE TABLE IF NOT EXISTS npc_memory (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID（同步作为 Qdrant point_id）',
+  npc_id BIGINT NOT NULL COMMENT 'NPC ID',
+  scene_id BIGINT DEFAULT NULL COMMENT '来源场景，可空',
+  tick BIGINT DEFAULT NULL COMMENT '来源 tick',
+  type VARCHAR(16) NOT NULL COMMENT 'observation/dialogue/reflection/event/manual',
+  content TEXT NOT NULL COMMENT '记忆原文，<=1000 字',
+  importance TINYINT DEFAULT 5 COMMENT '1~10 重要度；本期用规则打分',
+  embed_status VARCHAR(16) DEFAULT 'pending' COMMENT 'pending/embedded/failed',
+  embed_model VARCHAR(64) DEFAULT NULL COMMENT '实际使用的 embedding 模型',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  last_accessed_at DATETIME(3) DEFAULT NULL COMMENT '最近一次被 retrieve 命中的时间',
+  access_count INT DEFAULT 0 COMMENT '被检索命中次数',
+  INDEX idx_npc_time (npc_id, created_at),
+  INDEX idx_npc_importance (npc_id, importance DESC),
+  INDEX idx_embed_status (embed_status),
+  CONSTRAINT fk_mem_npc FOREIGN KEY (npc_id) REFERENCES npc(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='[M4.2.2] NPC 长期记忆元数据';
