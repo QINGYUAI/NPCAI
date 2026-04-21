@@ -33,7 +33,7 @@ export interface EmbedCacheOptions {
 /** 简单 LRU：Map 按插入顺序迭代，命中时删再插以刷新时序 */
 class LruMap<K, V> {
   private readonly map = new Map<K, V>();
-  constructor(private readonly capacity: number) {}
+  constructor(private readonly capacity: number) { }
   get(k: K): V | undefined {
     const v = this.map.get(k);
     if (v !== undefined) {

@@ -74,7 +74,7 @@ export function getMemoryConfig(): MemoryConfig {
   if (embedDim !== vectorSize) {
     throw new Error(
       `[memory.config] MEMORY_EMBED_DIM(${embedDim}) !== QDRANT_VECTOR_SIZE(${vectorSize})；` +
-        '换模型须重建 Qdrant collection',
+      '换模型须重建 Qdrant collection',
     );
   }
   const storeMode = readStr('MEMORY_STORE_MODE');
