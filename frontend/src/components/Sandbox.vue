@@ -1307,7 +1307,16 @@ function categoryLabel(v: string | null | undefined) {
 
     <el-empty v-if="!loading && scenes.length === 0" description="尚无启用状态的场景，请先在「场景」Tab 创建" />
 
-    <div v-else class="flex flex-col lg:flex-row gap-4">
+    <!--
+      [M4.2.1.c] 布局策略：
+      - viewportWide（≥1280px）：外层横向 row，左列 sandbox-layout-left（固定 800 宽，canvas 与 aside 竖向堆叠），
+        右列为 SandboxTimeline（360 宽 sticky panel）。
+      - 否则（<1280px，drawer 模式）：沿用原 `flex-col lg:flex-row`，canvas + aside 并排或堆叠，
+        timeline 改由顶栏 Σ 标签唤起 el-drawer（渲染在 v-else 分支外层的独立节点）。
+      - 使用 `display: contents` 让 canvas + aside 的 DOM 结构在两种模式下复用同一段 template。
+    -->
+    <div v-else :class="viewportWide ? 'sandbox-layout-wide' : 'flex flex-col lg:flex-row gap-4'">
+      <div :class="viewportWide ? 'sandbox-layout-left' : 'contents'">
       <div class="sandbox-canvas-wrap" :style="canvasWrapStyle" @click.capture="closeCtxMenu">
         <div ref="containerEl" class="sandbox-canvas" />
         <el-skeleton v-if="loading" :rows="8" animated class="sandbox-skeleton" />
@@ -1365,6 +1374,7 @@ function categoryLabel(v: string | null | undefined) {
           </li>
         </ul>
       </aside>
+      </div>
 
       <!-- [M4.2.1.c] 右侧独立列：tick 时间线浮窗（仅宽屏 ≥1280px） -->
       <SandboxTimeline
@@ -1440,6 +1450,30 @@ function categoryLabel(v: string | null | undefined) {
   overflow: hidden;
   background: #0d1117;
   flex-shrink: 0;
+}
+
+/*
+ * [M4.2.1.c] panel 模式下的两列布局
+ * - 左列固定 800px（== VIEWPORT_W）与 canvas 同宽；canvas 与 aside 竖向堆叠
+ * - 右列为 SandboxTimeline sticky panel（360px）
+ * - 只在 viewportWide=true 时生效；drawer 模式下沿用原 flex-col/lg:flex-row
+ */
+.sandbox-layout-wide {
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.sandbox-layout-left {
+  /* 用 block 而非 flex-col：避免 aside 的 `flex-1` 在纵向主轴下被拉伸到异常高度；
+     canvas 是固定尺寸浮于上，aside 走块级文档流自然铺满 800px 宽 */
+  display: block;
+  width: 800px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.sandbox-layout-left > .sandbox-canvas-wrap {
+  margin-bottom: 1rem;
 }
 
 .sandbox-canvas {
