@@ -33,6 +33,12 @@ export interface GraphInput {
   dryRun: boolean;
   /** AbortController 信号，用于硬停 */
   signal?: AbortSignal;
+  /**
+   * [M4.2.4.b] event-intake 节点的 prompt 段；空字符串 / undefined = 不注入
+   * - 由 scheduler 在 tick 顶部预取场景事件 + per-NPC pick 后产出
+   * - 最终注入到 buildPlanPrompt 的 user 消息最前（event > scene > neighbor > memory > tick）
+   */
+  eventBlock?: string;
 }
 
 export interface GraphOutput {
@@ -146,7 +152,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
   });
   const memoryBlock = buildMemoryBlock(retrieveResult.entries);
 
-  /** plan 节点 */
+  /** plan 节点；[M4.2.4.b] 注入 eventBlock（若有） */
   const planPrompt = buildPlanPrompt({
     scene: input.scene,
     npc,
@@ -154,6 +160,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     prevSummary,
     tick,
     memoryBlock,
+    eventBlock: input.eventBlock,
   });
   const planResult = await callWithRetry(
     aiCfg,

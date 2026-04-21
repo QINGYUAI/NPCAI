@@ -132,6 +132,23 @@ export type TickEvent =
       reflection_ids: number[];
       source_memory_ids: number[];
       at: string;
+    }
+  /**
+   * [M4.2.4.b] 场景事件创建广播（POST /api/scene/:id/events 成功后同步 emit）
+   * - 前端多客户端同步 + 单客户端 POST caller 直接拿到 id 用于本地呈现
+   * - wsServer.serializeEvent 走默认分支直接 JSON.stringify；不做摘要（事件本体已被 500 字 + 2KB payload 约束）
+   * - actor / payload / visible_npcs 字段与 scene_event 行结构完全对齐，前端可直接入 ring buffer
+   */
+  | {
+      type: 'scene.event.created';
+      scene_id: number;
+      event_id: number;
+      event_type: 'weather' | 'dialogue' | 'system' | 'plot';
+      actor: string | null;
+      content: string;
+      payload: Record<string, unknown> | null;
+      visible_npcs: number[] | null;
+      at: string;
     };
 
 /** 从数据库加载的 NPC 行（推理图节点所需最小集合） */

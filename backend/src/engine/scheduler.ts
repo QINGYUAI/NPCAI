@@ -8,6 +8,15 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { pool } from '../db/connection.js';
 import { bus } from './bus.js';
+import { getEventConfig } from './event/config.js';
+import {
+  fetchConsumedSet,
+  fetchRecentSceneEvents,
+  writeConsumedBatch,
+} from './event/fetchRecentEvents.js';
+import { pickEventsForNpc } from './event/intake.js';
+import { buildEventBlock } from './event/prompts.js';
+import type { SceneEventRow } from './event/types.js';
 import { runGraph } from './graph/build.js';
 import type {
   EngineConfig,
@@ -232,6 +241,39 @@ export class SceneScheduler {
       Array.from(new Set(npcs.map((n) => n.ai_config_id))),
     );
 
+    /**
+     * [M4.2.4.b] event-intake 预取：scene 级一次查询 + consumed 预读
+     * - 拉票 Q2b：tick 内 1 次查事件 + 1 次查 consumed（vs per-NPC N² 查询）
+     * - 拉票 Q8a：查询失败降级为「无事件」，不阻塞整 tick；scheduler 打 warn 后继续跑 plan/speak
+     * - eventConfig.enabled=false 时彻底短路（查询跳过，每 NPC eventBlock 为空）
+     */
+    const eventCfg = getEventConfig();
+    let sceneEvents: SceneEventRow[] = [];
+    let consumedSet: Set<string> = new Set();
+    if (eventCfg.enabled) {
+      try {
+        sceneEvents = await fetchRecentSceneEvents({
+          scene_id: this.scene_id,
+          lookbackSeconds: eventCfg.lookbackSeconds,
+          /** hardLimit 估算：max per-NPC × NPC 数 × 2 buffer；避免大量定向事件被误丢 */
+          hardLimit: Math.max(eventCfg.maxPerTick * npcs.length * 2, eventCfg.maxPerTick),
+        });
+        if (sceneEvents.length > 0) {
+          consumedSet = await fetchConsumedSet({
+            event_ids: sceneEvents.map((e) => e.id),
+            npc_ids: npcs.map((n) => n.id),
+          });
+        }
+      } catch (e) {
+        console.warn(
+          `[engine.event] scene=${this.scene_id} tick=${tickNo} event-intake 预取失败降级为空：`,
+          (e as Error).message,
+        );
+        sceneEvents = [];
+        consumedSet = new Set();
+      }
+    }
+
     /** 并发池：Promise.all + 分片 */
     await runWithPool(npcs, this.cfg.concurrency, async (npc) => {
       if (signal.aborted) return;
@@ -265,6 +307,20 @@ export class SceneScheduler {
         this.lastTickTokensByNpc.set(npc.id, 0);
         return;
       }
+      /**
+       * [M4.2.4.b] per-NPC event-intake（纯函数）：
+       * - 基于 tick 顶部预取的 sceneEvents + consumedSet 做 3 步过滤（visible_npcs / consumed / maxPerTick）
+       * - enabled=false 时 sceneEvents 本身为空，pickEventsForNpc 直接返回 empty，eventBlock=''，完全不影响 prompt
+       * - dry_run 模式下仍调用 pickEventsForNpc 但 eventBlock 不会被 dry 路径使用（对齐 memory 子系统风格）
+       */
+      const intake = pickEventsForNpc({
+        allEvents: sceneEvents,
+        npc_id: npc.id,
+        consumedSet,
+        maxPerTick: eventCfg.maxPerTick,
+      });
+      const eventBlock = buildEventBlock(intake.items);
+
       try {
         const result = await runGraph({
           scene,
@@ -273,6 +329,7 @@ export class SceneScheduler {
           tick: tickNo,
           dryRun: this.cfg.dry_run,
           signal,
+          eventBlock,
         });
         this.costUsdTotal += result.cost_usd || 0;
         /** [M4.2.1.a] 记录真实 tokens 供下一 tick budget 判定；dry_run 仍为 0 */
@@ -320,6 +377,26 @@ export class SceneScheduler {
           output_meta: metaStr.str,
           duration_ms: npcDuration,
         });
+
+        /**
+         * [M4.2.4.b] 事件消费写回（拉票 Q1a：success 后立即写，不等 tick 尾）
+         * - runGraph 成功才写，失败 / 异常路径不写 → 下 tick 可重新看到事件
+         * - INSERT IGNORE 保证幂等：即使重复跑（stepOnce 误触发）也不报错
+         * - 写失败不阻塞主流程，仅记 warn
+         */
+        if (intake.consumed_ids.length > 0) {
+          try {
+            await writeConsumedBatch({
+              pairs: intake.consumed_ids.map((eid) => ({ event_id: eid, npc_id: npc.id })),
+              tick: tickNo,
+            });
+          } catch (e) {
+            console.warn(
+              `[engine.event] scene=${this.scene_id} npc=${npc.id} tick=${tickNo} writeConsumed 失败：`,
+              (e as Error).message,
+            );
+          }
+        }
 
         /** [M4.2.1.b] tick.npc.updated 携带 status / duration / tokens / cost，WS 直推时间线 */
         bus.emitEvent({
