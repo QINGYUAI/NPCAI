@@ -29,8 +29,12 @@ import type {
   WsConnectionState,
   WsMetaWarnMsg,
   WsTickEndMsg,
+  WsTickStartMsg,
+  WsTickNpcUpdatedMsg,
 } from '../types/engine'
 import type { Scene, SceneDetail, SceneNpcLink } from '../types/scene'
+import type { TimelineTickRow, TimelineNpcEntry } from '../types/timeline'
+import SandboxTimeline from './SandboxTimeline.vue'
 import { NPC_CATEGORIES } from '../constants/npc'
 import { resolveAvatarUrl } from '../utils/avatar'
 import {
@@ -88,6 +92,135 @@ const engineRunning = computed(() => engineStatus.value?.running === true)
  */
 let wsClose: (() => void) | null = null
 const wsState = ref<WsConnectionState>('closed')
+
+/**
+ * [M4.2.1.c] tick 时间线：ring buffer 最多 20 条
+ * - WS tick.start → push 新 row；tick.npc.updated → 追加到当前 row.npcs；tick.end → 覆盖 duration
+ * - 切场景 / 组件卸载时清空；会话累计独立于 ring buffer（用于顶栏 Σ 标签）
+ */
+const TIMELINE_MAX = 20
+const timelineEntries = ref<TimelineTickRow[]>([])
+/** 本次场景会话 tokens / cost 累计；cost_usd 为 null 表示至少有一次价格未知（仍累计 tokens） */
+const sessionTokens = ref(0)
+const sessionCostUsd = ref<number | null>(0)
+/** drawer 模式（小屏）下的开关；panel 模式下不使用此字段 */
+const timelineDrawerVisible = ref(false)
+/** 视口宽度 ≥1280 走 panel；否则走 drawer（用户可点顶栏标签唤起） */
+const VIEWPORT_WIDE_BREAKPOINT = 1280
+const viewportWide = ref(
+  typeof window !== 'undefined' ? window.innerWidth >= VIEWPORT_WIDE_BREAKPOINT : true,
+)
+function onWindowResize() {
+  viewportWide.value = window.innerWidth >= VIEWPORT_WIDE_BREAKPOINT
+}
+
+/** panel 模式下时间线面板是否折叠（由顶栏累计标签切换） */
+const timelinePanelCollapsed = ref(false)
+
+function resetTimeline() {
+  timelineEntries.value = []
+  sessionTokens.value = 0
+  sessionCostUsd.value = 0
+  timelineDrawerVisible.value = false
+}
+
+/** 顶栏累计标签展示：$ 保留 4 位；未知（null）降级为 `$?` */
+function fmtSessionCost(v: number | null): string {
+  if (v == null) return '$?'
+  if (v < 0.0001 && v > 0) return `$${v.toExponential(2)}`
+  return `$${v.toFixed(4)}`
+}
+/** tokens 简写：≥10k → "1.2k"，否则原值 */
+function fmtTokensShort(n: number): string {
+  return n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+}
+
+/**
+ * [M4.2.1.c] 点击顶栏 Σ 标签：
+ * - 宽屏（panel 模式）：切换右侧面板折叠
+ * - 小屏（drawer 模式）：切换抽屉可见
+ */
+function onTimelinePillClick() {
+  if (viewportWide.value) {
+    timelinePanelCollapsed.value = !timelinePanelCollapsed.value
+  } else {
+    timelineDrawerVisible.value = !timelineDrawerVisible.value
+  }
+}
+
+/**
+ * [M4.2.1.c] tick.start：新建一行 tick 记录放入 ring buffer
+ * - 超过 TIMELINE_MAX 时移除最旧一条（尾插头删）
+ */
+function applyWsTickStart(msg: WsTickStartMsg) {
+  const row: TimelineTickRow = {
+    tick: msg.tick,
+    started_at: msg.ts,
+    tokens_total: 0,
+    cost_usd: 0,
+    npcs: [],
+  }
+  const next = timelineEntries.value.slice()
+  next.push(row)
+  if (next.length > TIMELINE_MAX) next.splice(0, next.length - TIMELINE_MAX)
+  timelineEntries.value = next
+}
+
+/**
+ * [M4.2.1.c] tick.npc.updated：追加 NPC 结果到对应 tick 行
+ * - 若该 tick 行尚未建立（丢 start 或先来 npc 帧），即时补建一行
+ * - 同步累计到 tick 行和 session 累计（仅 success 计费；skipped/error 也展示但不算）
+ */
+function applyWsNpcUpdated(msg: WsTickNpcUpdatedMsg) {
+  const list = timelineEntries.value.slice()
+  let row = list.find((r) => r.tick === msg.tick)
+  if (!row) {
+    row = {
+      tick: msg.tick,
+      started_at: msg.ts,
+      tokens_total: 0,
+      cost_usd: 0,
+      npcs: [],
+    }
+    list.push(row)
+    if (list.length > TIMELINE_MAX) list.splice(0, list.length - TIMELINE_MAX)
+  }
+  const status: TimelineNpcEntry['status'] =
+    msg.status === 'success' ? 'success' : msg.status === 'skipped' ? 'skipped' : 'error'
+  const metaSummary = (msg.meta_summary ?? null) as Record<string, unknown> | null
+  const entry: TimelineNpcEntry = {
+    npc_id: msg.npc_id,
+    npc_name: msg.npc_name,
+    status,
+    duration_ms: msg.duration_ms,
+    prompt_tokens: msg.tokens?.prompt ?? undefined,
+    completion_tokens: msg.tokens?.completion ?? undefined,
+    total_tokens: msg.tokens?.total ?? undefined,
+    cost_usd: msg.cost_usd ?? null,
+    latest_say: metaSummary && typeof metaSummary.latest_say === 'string' ? metaSummary.latest_say : null,
+    latest_action:
+      metaSummary && typeof metaSummary.latest_action === 'string' ? metaSummary.latest_action : null,
+    emotion: metaSummary && typeof metaSummary.emotion === 'string' ? metaSummary.emotion : null,
+  }
+  if (status === 'skipped') entry.note = '超预算，跳过'
+  else if (status === 'error') entry.note = '执行出错'
+  row.npcs.push(entry)
+
+  /** 只累计 success 的 tokens / cost（skipped 没发起 LLM 调用；error 视为已计但多半也没产生成本） */
+  if (status === 'success' && msg.tokens?.total) {
+    row.tokens_total += msg.tokens.total
+    sessionTokens.value += msg.tokens.total
+  }
+  if (status === 'success' && typeof msg.cost_usd === 'number') {
+    row.cost_usd = (row.cost_usd ?? 0) + msg.cost_usd
+    if (sessionCostUsd.value !== null) sessionCostUsd.value += msg.cost_usd
+  } else if (status === 'success' && msg.cost_usd == null) {
+    /** 命中价格未知 → 标记 row / session 的 cost 为 null（未知） */
+    row.cost_usd = null
+    sessionCostUsd.value = null
+  }
+  timelineEntries.value = list
+}
 
 /**
  * [M4.2.0] 最近一次 simulation_meta 越界告警
@@ -409,6 +542,8 @@ function startEngineObserver() {
         /** 仅短暂 closed → 重连中，不立即启轮询，等 degraded */
       }
     },
+    onTickStart: (msg) => applyWsTickStart(msg),
+    onNpcUpdated: (msg) => applyWsNpcUpdated(msg),
     onTickEnd: (msg) => applyWsTickEnd(msg),
     onMetaWarn: (msg) => applyWsMetaWarn(msg),
     onError: (msg) => {
@@ -429,15 +564,24 @@ function stopEngineObserver() {
   stopEngineStatusTimer()
 }
 
-/** [M4.2.1.b] 用 WS 的 tick.end 帧覆盖关键字段，减少轮询滞后 */
+/** [M4.2.1.b] 用 WS 的 tick.end 帧覆盖关键字段，减少轮询滞后；[M4.2.1.c] 同步收尾 timeline 行 */
 function applyWsTickEnd(msg: WsTickEndMsg) {
-  if (!engineStatus.value) return
-  engineStatus.value = {
-    ...engineStatus.value,
-    tick: msg.tick,
-    last_tick_at: msg.ts,
-    last_duration_ms: msg.duration_ms,
-    cost_usd_total: msg.cost_usd_total ?? engineStatus.value.cost_usd_total,
+  if (engineStatus.value) {
+    engineStatus.value = {
+      ...engineStatus.value,
+      tick: msg.tick,
+      last_tick_at: msg.ts,
+      last_duration_ms: msg.duration_ms,
+      cost_usd_total: msg.cost_usd_total ?? engineStatus.value.cost_usd_total,
+    }
+  }
+  /** timeline：把 duration_ms 与 ended_at 写回对应行（若行已移出 ring buffer 则无动作） */
+  const list = timelineEntries.value.slice()
+  const row = list.find((r) => r.tick === msg.tick)
+  if (row) {
+    row.duration_ms = msg.duration_ms
+    row.ended_at = msg.ts
+    timelineEntries.value = list
   }
 }
 
@@ -1004,10 +1148,11 @@ async function loadSceneDetail(id: number) {
 watch(activeSceneId, (id) => {
   if (id) {
     loadSceneDetail(id)
-    /** 切场景时重置引擎面板状态并拉一次最新状态 */
+    /** 切场景时重置引擎面板状态 + 时间线，并拉一次最新状态 */
     stopEngineObserver()
     engineStatus.value = null
     lastShownMetaWarnAt = null
+    resetTimeline()
     void pollEngineStatus().then(() => {
       if (engineStatus.value?.running) startEngineObserver()
     })
@@ -1016,10 +1161,12 @@ watch(activeSceneId, (id) => {
     stopEngineObserver()
     engineStatus.value = null
     lastShownMetaWarnAt = null
+    resetTimeline()
   }
 })
 
 onMounted(async () => {
+  window.addEventListener('resize', onWindowResize)
   await loadScenes()
   if (activeSceneId.value) {
     await loadSceneDetail(activeSceneId.value)
@@ -1030,6 +1177,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWindowResize)
   stopBubbleTimer()
   stopEngineObserver()
   destroyGame()
@@ -1123,6 +1271,14 @@ function categoryLabel(v: string | null | undefined) {
             {{ wsState === 'open' ? '● WS' : wsState === 'degraded' ? '○ 轮询' : '◐ WS…' }}
           </el-tag>
         </el-tooltip>
+        <!-- [M4.2.1.c] 会话累计 tokens/cost：点击在小屏呼出时间线抽屉，大屏直接滚动到时间线浮窗 -->
+        <el-tooltip placement="bottom"
+          content="本会话累计 tokens / cost（切场景或刷新归零）；点击展开时间线">
+          <el-tag size="small" type="success" effect="plain" class="session-sum-pill"
+            @click="onTimelinePillClick">
+            Σ {{ fmtSessionCost(sessionCostUsd) }} · {{ fmtTokensShort(sessionTokens) }}tok
+          </el-tag>
+        </el-tooltip>
       </div>
       <div class="flex-1" />
       <div class="flex items-center gap-2">
@@ -1175,6 +1331,7 @@ function categoryLabel(v: string | null | undefined) {
       </div>
 
       <aside class="sandbox-aside flex-1 min-w-0">
+        <!-- [M4.2.1.c] 场景详情 aside；右侧再挂 SandboxTimeline（panel 模式，仅宽屏） -->
         <h3 class="text-sm font-semibold text-[#f0f6fc] mb-2">
           {{ activeScene?.name || '—' }}
           <el-tag v-if="activeScene" size="small" type="info" class="ml-1">
@@ -1207,7 +1364,27 @@ function categoryLabel(v: string | null | undefined) {
           </li>
         </ul>
       </aside>
+
+      <!-- [M4.2.1.c] 右侧独立列：tick 时间线浮窗（仅宽屏 ≥1280px） -->
+      <SandboxTimeline
+        v-if="viewportWide"
+        mode="panel"
+        :entries="timelineEntries"
+        :total-tokens="sessionTokens"
+        :total-cost="sessionCostUsd"
+        v-model:collapsed="timelinePanelCollapsed"
+      />
     </div>
+
+    <!-- [M4.2.1.c] 小屏（<1280px）用抽屉：由顶栏 Σ 标签唤起 -->
+    <SandboxTimeline
+      v-if="!viewportWide"
+      mode="drawer"
+      :entries="timelineEntries"
+      :total-tokens="sessionTokens"
+      :total-cost="sessionCostUsd"
+      v-model:visible="timelineDrawerVisible"
+    />
 
     <p class="text-xs text-[var(--ainpc-muted)] mt-4">
       交互：<strong>左键</strong>拖拽节点（按 <kbd>Shift</kbd> 临时吸附）/ <strong>右键</strong>节点弹出菜单 /
@@ -1298,6 +1475,16 @@ function categoryLabel(v: string | null | undefined) {
 .meta-warn-pill {
   margin-left: 2px;
   animation: meta-warn-flash 1.6s ease-in-out 0s 2 alternate;
+}
+
+/* [M4.2.1.c] 顶栏会话累计标签：鼠标指针提示可点击 */
+.session-sum-pill {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.session-sum-pill:hover {
+  filter: brightness(1.15);
 }
 @keyframes meta-warn-flash {
   from { opacity: 0.6; }
