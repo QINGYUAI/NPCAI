@@ -15,6 +15,14 @@ const DEFAULTS = {
   MEMORY_EMBED_DIM: '1536',
   MEMORY_TOP_K: '5',
   MEMORY_RETENTION_DAYS: '30',
+  /**
+   * [M4.2.3] 反思触发周期：tick % N === 0 触发一次反思（每个 NPC 独立判断）
+   * - 0 = 关闭自动反思（仍支持 POST /api/engine/reflect 手动触发，M4.2.3.c）
+   * - 默认 5：约 30s × 5 = 2.5min 一次，成本可控
+   */
+  REFLECT_EVERY_N_TICK: '5',
+  /** [M4.2.3] 反思输入：从 npc_memory 按 created_at DESC 取最近 K 条（全 type） */
+  REFLECT_RECENT_MEMORY_K: '20',
   /** sync = 同步双写（拉票 Q3 a，默认）；async = fire-and-forget 留给 M4.2.5 */
   MEMORY_STORE_MODE: 'sync',
   /** 拉票 Q1 = a：prevSummary + 同场 NPC 名 */
@@ -59,6 +67,13 @@ export interface MemoryConfig {
   retentionDays: number;
   storeMode: 'sync' | 'async';
   retrieveQueryMode: 'prev_summary_plus_neighbors' | 'prev_summary_only';
+  /** [M4.2.3] 反思子系统配置（合并到 MemoryConfig 避免新建独立 config 文件） */
+  reflection: {
+    /** 0 = 关闭自动反思；>0 = tick % N === 0 触发一次 */
+    everyNTick: number;
+    /** 反思参考的最近 K 条 memory */
+    recentMemoryK: number;
+  };
   /**
    * [M4.2.2.c] Y2 指针式 embedding：ai_config 表的 id；0 = 禁用（fallback 到 chat aiCfg）
    */
@@ -107,6 +122,13 @@ export function getMemoryConfig(): MemoryConfig {
       `[memory.config] MEMORY_EMBED_AI_CONFIG_ID 必须为 >=0 的整数，当前=${rawPtr}`,
     );
   }
+  /** [M4.2.3] 反思 env 解析：允许 0（关闭），其余必须正整数 */
+  const rawEvery = (process.env.REFLECT_EVERY_N_TICK ?? DEFAULTS.REFLECT_EVERY_N_TICK).trim();
+  const reflectEveryN = Number.parseInt(rawEvery || '0', 10);
+  if (!Number.isFinite(reflectEveryN) || reflectEveryN < 0) {
+    throw new Error(`[memory.config] REFLECT_EVERY_N_TICK 必须为 >=0 的整数，当前=${rawEvery}`);
+  }
+  const reflectRecentK = readInt('REFLECT_RECENT_MEMORY_K');
   cached = {
     enabled: readBool('MEMORY_EMBED_ENABLED'),
     embedModel: readStr('MEMORY_EMBED_MODEL'),
@@ -126,6 +148,10 @@ export function getMemoryConfig(): MemoryConfig {
       enabled: readBool('EMBED_CACHE_ENABLED'),
       ttlDays: readInt('EMBED_CACHE_TTL_DAYS'),
       dir: readStr('EMBED_CACHE_DIR'),
+    },
+    reflection: {
+      everyNTick: reflectEveryN,
+      recentMemoryK: reflectRecentK,
     },
   };
   return cached;
