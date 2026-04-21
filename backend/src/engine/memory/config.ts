@@ -19,6 +19,14 @@ const DEFAULTS = {
   MEMORY_STORE_MODE: 'sync',
   /** 拉票 Q1 = a：prevSummary + 同场 NPC 名 */
   MEMORY_RETRIEVE_QUERY_MODE: 'prev_summary_plus_neighbors',
+  /**
+   * [M4.2.2.c] 指针式 embedding provider（Y2 方案）
+   * - 空 / 0 = 不启用，embedText 复用 NPC 绑定的 chat ai_config（M4.2.2.a 行为）
+   * - 正整数 = ai_config 表里一条记录的主键 id；retrieve/store 会按此 id 加载 api_key/base_url/provider
+   *   并用 MEMORY_EMBED_MODEL 覆盖 model 字段（因为 ai_config.model 通常是 chat 模型名如 qwen-max）
+   * - 典型场景：NPC chat 用 DeepSeek（无 embedding），embedding 另指通义千问/智谱这种支持 embedding 的 provider
+   */
+  MEMORY_EMBED_AI_CONFIG_ID: '0',
   QDRANT_URL: 'http://localhost:6333',
   QDRANT_API_KEY: '',
   QDRANT_COLLECTION: 'npc_memory',
@@ -51,6 +59,10 @@ export interface MemoryConfig {
   retentionDays: number;
   storeMode: 'sync' | 'async';
   retrieveQueryMode: 'prev_summary_plus_neighbors' | 'prev_summary_only';
+  /**
+   * [M4.2.2.c] Y2 指针式 embedding：ai_config 表的 id；0 = 禁用（fallback 到 chat aiCfg）
+   */
+  embedAiConfigId: number;
   qdrant: {
     url: string;
     apiKey: string | undefined;
@@ -87,6 +99,14 @@ export function getMemoryConfig(): MemoryConfig {
       `[memory.config] MEMORY_RETRIEVE_QUERY_MODE 仅支持 prev_summary_plus_neighbors|prev_summary_only，当前=${retrieveMode}`,
     );
   }
+  /** 0 = 禁用指针（允许 0，不用 readInt 的 >0 校验） */
+  const rawPtr = (process.env.MEMORY_EMBED_AI_CONFIG_ID ?? DEFAULTS.MEMORY_EMBED_AI_CONFIG_ID).trim();
+  const embedAiConfigId = Number.parseInt(rawPtr || '0', 10);
+  if (!Number.isFinite(embedAiConfigId) || embedAiConfigId < 0) {
+    throw new Error(
+      `[memory.config] MEMORY_EMBED_AI_CONFIG_ID 必须为 >=0 的整数，当前=${rawPtr}`,
+    );
+  }
   cached = {
     enabled: readBool('MEMORY_EMBED_ENABLED'),
     embedModel: readStr('MEMORY_EMBED_MODEL'),
@@ -95,6 +115,7 @@ export function getMemoryConfig(): MemoryConfig {
     retentionDays: readInt('MEMORY_RETENTION_DAYS'),
     storeMode,
     retrieveQueryMode: retrieveMode,
+    embedAiConfigId,
     qdrant: {
       url: readStr('QDRANT_URL'),
       apiKey: readStr('QDRANT_API_KEY') || undefined,

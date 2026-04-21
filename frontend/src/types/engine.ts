@@ -25,6 +25,12 @@ export interface EngineStatus {
   meta_warns?: MetaWarn[]
   /** [M4.2.1.b] WS 订阅路径；无此字段 = WS 关闭 = 前端回落 3s 轮询 */
   ws_endpoint?: string
+  /**
+   * [M4.2.2.c] 记忆子系统降级窗口：最近 5 分钟内 Qdrant 不可用或 embedding 失败
+   * true  → 顶栏亮 🧠 徽章，NPC 仍可对话但回忆降级为 MySQL importance 排序
+   * false/undefined → 正常
+   */
+  memory_degraded?: boolean
 }
 
 /** [M4.2.1.b] WS 消息（服务端 → 客户端） */

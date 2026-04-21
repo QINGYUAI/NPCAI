@@ -1272,6 +1272,13 @@ function categoryLabel(v: string | null | undefined) {
             {{ wsState === 'open' ? '● WS' : wsState === 'degraded' ? '○ 轮询' : '◐ WS…' }}
           </el-tag>
         </el-tooltip>
+        <!-- [M4.2.2.c] 记忆降级徽章：Qdrant 不可用或 embedding 失败 5 分钟窗口内亮起 -->
+        <el-tooltip v-if="engineStatus?.memory_degraded" placement="bottom"
+          content="记忆子系统降级：近 5 分钟内 Qdrant 不可用或 embedding 失败，NPC 仍可对话但回忆降级为 MySQL importance 排序">
+          <el-tag type="warning" size="small" effect="dark" class="memory-warn-pill">
+            🧠 记忆降级
+          </el-tag>
+        </el-tooltip>
         <!-- [M4.2.1.c] 会话累计 tokens/cost：点击在小屏呼出时间线抽屉，大屏直接滚动到时间线浮窗 -->
         <el-tooltip placement="bottom"
           content="本会话累计 tokens / cost（切场景或刷新归零）；点击展开时间线">
@@ -1510,6 +1517,12 @@ function categoryLabel(v: string | null | undefined) {
 .meta-warn-pill {
   margin-left: 2px;
   animation: meta-warn-flash 1.6s ease-in-out 0s 2 alternate;
+}
+
+/* [M4.2.2.c] 记忆降级徽标：持续 5 分钟窗口期可见，无限慢脉冲提示降级状态 */
+.memory-warn-pill {
+  margin-left: 2px;
+  animation: meta-warn-flash 2.4s ease-in-out infinite alternate;
 }
 
 /* [M4.2.1.c] 顶栏会话累计标签：鼠标指针提示可点击 */

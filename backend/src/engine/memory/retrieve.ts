@@ -18,6 +18,7 @@ import { pool } from '../../db/connection.js';
 import { embedText, type LogContext } from '../../utils/llmClient.js';
 import type { NpcRow, SceneRow } from '../types.js';
 import { getMemoryConfig } from './config.js';
+import { resolveEmbedAiConfig } from './embedAiConfig.js';
 import { getQdrantMemoryStore, QdrantUnavailableError } from './qdrantClient.js';
 import type { MemoryEntry, MemoryType, RetrieveResult } from './types.js';
 
@@ -58,9 +59,18 @@ export async function retrieveMemories(input: RetrieveInput): Promise<RetrieveRe
 
   const queryText = buildQueryText(input);
   const topK = cfg.topK;
+
+  /**
+   * [M4.2.2.c] Y2 指针式：有 MEMORY_EMBED_AI_CONFIG_ID 则用专用 embedding provider；
+   * 无则 fallback 到 NPC 的 chat aiCfg（保持 M4.2.2.a 行为）
+   */
+  const embedResolved = await resolveEmbedAiConfig();
+  const embedCfg = embedResolved ?? input.aiCfg;
+  const embedModel = embedResolved?.model;
+
   const logContext: LogContext = {
     source: 'engine.memory.retrieve',
-    ai_config_id: input.aiCfg.id,
+    ai_config_id: embedResolved?.id ?? input.aiCfg.id,
     context: {
       scene_id: input.scene.id,
       npc_id: input.npc.id,
@@ -71,10 +81,15 @@ export async function retrieveMemories(input: RetrieveInput): Promise<RetrieveRe
 
   let vector: number[] | null = null;
   try {
-    const emb = await embedText(input.aiCfg, queryText, {
-      logContext,
-      timeout: 8000,
-    });
+    const emb = await embedText(
+      { api_key: embedCfg.api_key, base_url: embedCfg.base_url, provider: embedCfg.provider },
+      queryText,
+      {
+        logContext,
+        timeout: 8000,
+        ...(embedModel ? { model: embedModel } : {}),
+      },
+    );
     vector = emb.vector;
   } catch (e) {
     /** embed 失败：保守走 MySQL 降级（让调用方能收到 entries，但标记 degraded） */

@@ -17,6 +17,7 @@ import { pool } from '../../db/connection.js';
 import { embedText, type LogContext } from '../../utils/llmClient.js';
 import type { NpcRow, SceneRow } from '../types.js';
 import { getMemoryConfig } from './config.js';
+import { resolveEmbedAiConfig } from './embedAiConfig.js';
 import { getQdrantMemoryStore, QdrantUnavailableError } from './qdrantClient.js';
 import type { MemoryType, StoreResult } from './types.js';
 
@@ -92,9 +93,16 @@ export async function storeMemory(input: StoreInput): Promise<StoreResult> {
     return { id: null, embedded: false, status: null };
   }
 
+  /**
+   * [M4.2.2.c] Y2 指针式 embedding；和 retrieve 保持一致
+   */
+  const embedResolved = await resolveEmbedAiConfig();
+  const embedCfg = embedResolved ?? input.aiCfg;
+  const embedModelOverride = embedResolved?.model;
+
   const logContext: LogContext = {
     source: 'engine.memory.store',
-    ai_config_id: input.aiCfg.id,
+    ai_config_id: embedResolved?.id ?? input.aiCfg.id,
     context: {
       scene_id: input.scene.id,
       npc_id: input.npc.id,
@@ -109,7 +117,15 @@ export async function storeMemory(input: StoreInput): Promise<StoreResult> {
   let vector: number[] | null = null;
   let embedModel: string | null = null;
   try {
-    const emb = await embedText(input.aiCfg, content, { logContext, timeout: 8000 });
+    const emb = await embedText(
+      { api_key: embedCfg.api_key, base_url: embedCfg.base_url, provider: embedCfg.provider },
+      content,
+      {
+        logContext,
+        timeout: 8000,
+        ...(embedModelOverride ? { model: embedModelOverride } : {}),
+      },
+    );
     vector = emb.vector;
     embedModel = emb.model;
   } catch (e) {
