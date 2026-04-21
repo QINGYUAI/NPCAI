@@ -24,6 +24,23 @@ export interface EngineStatus {
   errors_recent: number;
   cost_usd_total: number;
   config: EngineConfig;
+  /**
+   * [M4.2.0] 最近 N 条 simulation_meta 软阈值越界告警
+   * - 仅记录最近 20 条，溢出自动滚动
+   * - 有任意一条在最近 5 分钟内写入时，REST 响应会带 `X-Meta-Warn: 1`
+   */
+  meta_warns: MetaWarn[];
+}
+
+/** [M4.2.0] simulation_meta 超软阈值告警记录 */
+export interface MetaWarn {
+  scene_id: number;
+  npc_id: number;
+  npc_name?: string;
+  tick: number;
+  bytes: number;
+  soft_limit: number;
+  at: string;
 }
 
 /** 单次 tick 对某 NPC 的产出，写入 simulation_meta 与 npc_tick_log */

@@ -34,6 +34,12 @@ export interface GraphOutput {
   nextMeta: SimulationMetaV1;
   inputSummary: string;
   cost_usd?: number;
+  /**
+   * [M4.2.0] 本 tick 对该 NPC 的总 token 消耗（prompt+completion）
+   * - dry_run / M4.2.0 暂为 0；M4.2.1 接入 tiktoken 后真实填写
+   * - scheduler 会据此 + ai_config.budget_tokens_per_tick 在下一 tick 执行 budget 判定
+   */
+  tokens?: number;
 }
 
 const planSchema = z

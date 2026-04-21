@@ -16,6 +16,15 @@ export function createScheduler(scene_id: number, cfg: EngineConfig): SceneSched
   return s;
 }
 
+/**
+ * 直接把一个已有实例塞进注册表
+ * - 主要给单元测试用：在 controller 层之外创建 scheduler 后希望 REST 能查到
+ * - 业务代码请优先使用 createScheduler
+ */
+export function setScheduler(scene_id: number, scheduler: SceneScheduler): void {
+  schedulers.set(scene_id, scheduler);
+}
+
 export function removeScheduler(scene_id: number): void {
   schedulers.delete(scene_id);
 }

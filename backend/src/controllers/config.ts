@@ -9,7 +9,7 @@ import type { CreateConfigDto } from '../types/index.js';
 export async function getConfigList(req: Request, res: Response) {
   try {
     const { provider, status } = req.query;
-    let sql = 'SELECT id, name, provider, base_url, model, temperature, max_tokens, is_default, status, remark, created_at, updated_at FROM ai_config WHERE 1=1';
+    let sql = 'SELECT id, name, provider, base_url, model, temperature, max_tokens, budget_tokens_per_tick, is_default, status, remark, created_at, updated_at FROM ai_config WHERE 1=1';
     const params: (string | number)[] = [];
 
     if (provider) {
@@ -35,7 +35,7 @@ export async function getConfigById(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const [rows] = await pool.execute(
-      'SELECT id, name, provider, base_url, model, temperature, max_tokens, is_default, status, remark, created_at, updated_at FROM ai_config WHERE id = ?',
+      'SELECT id, name, provider, base_url, model, temperature, max_tokens, budget_tokens_per_tick, is_default, status, remark, created_at, updated_at FROM ai_config WHERE id = ?',
       [id]
     );
     const list = rows as unknown[];
@@ -53,7 +53,7 @@ export async function getConfigById(req: Request, res: Response) {
 export async function createConfig(req: Request, res: Response) {
   try {
     const body: CreateConfigDto = req.body;
-    const { name, provider, api_key, base_url, model, temperature, max_tokens, is_default, status, remark } = body;
+    const { name, provider, api_key, base_url, model, temperature, max_tokens, budget_tokens_per_tick, is_default, status, remark } = body;
 
     if (!name || !provider) {
       return res.status(400).json({ code: -1, message: '配置名称和提供商为必填' });
@@ -64,8 +64,8 @@ export async function createConfig(req: Request, res: Response) {
     }
 
     const [result] = await pool.execute(
-      `INSERT INTO ai_config (name, provider, api_key, base_url, model, temperature, max_tokens, is_default, status, remark)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ai_config (name, provider, api_key, base_url, model, temperature, max_tokens, budget_tokens_per_tick, is_default, status, remark)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name,
         provider,
@@ -74,6 +74,7 @@ export async function createConfig(req: Request, res: Response) {
         model || 'gpt-3.5-turbo',
         temperature ?? 0.7,
         max_tokens ?? 2000,
+        budget_tokens_per_tick ?? 2000,
         is_default ?? 0,
         status ?? 1,
         remark || null,
@@ -93,7 +94,7 @@ export async function updateConfig(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const body = req.body as Record<string, unknown>;
-    const { name, provider, api_key, base_url, model, temperature, max_tokens, is_default, status, remark } = body;
+    const { name, provider, api_key, base_url, model, temperature, max_tokens, budget_tokens_per_tick, is_default, status, remark } = body;
 
     const updates: string[] = [];
     const params: unknown[] = [];
@@ -105,6 +106,7 @@ export async function updateConfig(req: Request, res: Response) {
     if (model !== undefined) { updates.push('model = ?'); params.push(model); }
     if (temperature !== undefined) { updates.push('temperature = ?'); params.push(temperature); }
     if (max_tokens !== undefined) { updates.push('max_tokens = ?'); params.push(max_tokens); }
+    if (budget_tokens_per_tick !== undefined) { updates.push('budget_tokens_per_tick = ?'); params.push(budget_tokens_per_tick); }
     if (is_default !== undefined) {
       updates.push('is_default = ?');
       params.push(is_default);

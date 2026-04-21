@@ -18,6 +18,8 @@
 | 0.14 | 2026-04-20 | **M4.1.d 工具链交付**：新增 `backend/scripts/smoke-engine.ts` 与 `npm run smoke:engine`（纯 REST 驱动端到端 smoke，自动汇总 tick_log / ai_call_log 并给 PASS/WARN/FAIL 判决）；新增运行手册 [`docs/engine-smoke.md`](./engine-smoke.md) 含前置检查、curl 备选、常见失败排查表、DoD 清单 |
 | 1.0 | 2026-04-20 | **🎉 M4.1 整体关盘**：业主本地真 LLM smoke 🟢 PASS（2 NPC × 3 tick，18 次 LLM 调用零错误，平均 tick 15s，NPC 人设鲜明稳定，`neighbors` 感知与 `memory_summary` 跨 tick 累积均验证生效）。M4.1 四个子里程碑（a/b/c/d）全部完成，进入 M4.2 规划（候选方向：记忆向量化 M-1、反思循环、事件触发总线） |
 | 1.1 | 2026-04-20 | **M4.2 路线图交付**：新增 [`docs/m4.2-roadmap.md`](./m4.2-roadmap.md)，按业主选择把 5 条升级路径（尾补丁 / 观测性 / 记忆向量化 / 反思 / 事件总线）拆成 5 个独立可回滚子里程碑 M4.2.0~.4（总计 12.5 天），含数据模型、API、引擎内部变更、前端改动、测试矩阵、风险与 DoD；**仅文档**，不改代码，待评审 |
+| 1.2 | 2026-04-20 | **M4.2 路线图 v0.2**：首轮评审结论录入；记忆存储定案 **Qdrant**（双存储：MySQL 元数据 + Qdrant 向量），废弃客户端余弦 / pgvector 备选；§1.2 非范围补 3 条（NPC 动作副作用 / NPC 间对话管线 / 场景时间系统）；新增 `@qdrant/js-client-rest` 依赖与 `QDRANT_*` 环境变量 |
+| 1.3 | 2026-04-20 | **🚀 M4.2.0 交付**：①数据层 `ai_config.budget_tokens_per_tick` 迁移；②后端 scheduler 新增 `meta_warns` 滚动窗口 + `hasFreshMetaWarn`，controller 在近期有 warn 时响应头带 `X-Meta-Warn: 1`；③tick 前对上一 tick token 预算做硬检查，超支 NPC 本 tick 记 `skipped`；④前端 `NpcForm` simulation_meta 字节计 + 软/硬阈值实时警示 + 硬阈值提交前拦截；⑤前端 `Sandbox` 顶栏 meta-warn 徽章 + 去重 toast；新增 4 条单测（含 budget skip / meta 软阈值 / X-Meta-Warn 响应头）；后端 34 条单测全绿 |
 
 ---
 

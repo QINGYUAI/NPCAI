@@ -31,6 +31,44 @@ const avatarUploading = ref(false)
 const generateHint = ref('')
 /** 高级：外部仿真回写 JSON（自由结构） */
 const simulationMetaStr = ref('')
+
+/**
+ * [M4.2.0] simulation_meta 大小阈值（与后端 scheduler.ts 常量保持一致）
+ * - 软阈值 64KB：超过会在引擎 tick 中打 warn，但写入成功
+ * - 硬阈值 256KB：超过会被后端拒绝写入，tick 标 error
+ */
+const META_SOFT_BYTES = 64 * 1024
+const META_HARD_BYTES = 256 * 1024
+
+/** 按 UTF-8 真实字节数计算（非简单 length，中文/emoji 会大很多） */
+const simulationMetaBytes = computed(() => {
+  const s = simulationMetaStr.value
+  if (!s) return 0
+  return new TextEncoder().encode(s).length
+})
+const simulationMetaWarnLevel = computed<'ok' | 'soft' | 'hard'>(() => {
+  const b = simulationMetaBytes.value
+  if (b > META_HARD_BYTES) return 'hard'
+  if (b > META_SOFT_BYTES) return 'soft'
+  return 'ok'
+})
+/** JSON 合法性实时校验（空串视为 ok，不强制 JSON） */
+const simulationMetaJsonError = computed<string | null>(() => {
+  const s = simulationMetaStr.value.trim()
+  if (!s) return null
+  try {
+    JSON.parse(s)
+    return null
+  } catch (e) {
+    return (e as Error).message
+  }
+})
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`
+}
 const aiConfigList = ref<AiConfig[]>([])
 const form = ref<CreateNpcForm>({
   name: '',
@@ -193,6 +231,14 @@ async function submit() {
   }
   if (!form.value.ai_config_id) {
     toast.warning('请选择 AI 配置')
+    return
+  }
+
+  /** [M4.2.0] 硬阈值拦截：避免把一定会被后端拒绝的超大 meta 提交出去 */
+  if (simulationMetaWarnLevel.value === 'hard') {
+    toast.error(
+      `simulation_meta 超过硬阈值 ${formatBytes(META_HARD_BYTES)}，后端会拒绝写入，请精简后再保存`,
+    )
     return
   }
 
@@ -422,6 +468,28 @@ onMounted(loadAiConfigs)
           </p>
           <el-input v-model="simulationMetaStr" type="textarea" :rows="6" placeholder='例如：{"note":"由运行时写入"}'
             class="font-mono text-sm" />
+          <!-- M4.2.0 字节计 + 软/硬阈值警示条 -->
+          <div class="meta-size-bar mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span
+              :class="{
+                'meta-size-ok': simulationMetaWarnLevel === 'ok',
+                'meta-size-soft': simulationMetaWarnLevel === 'soft',
+                'meta-size-hard': simulationMetaWarnLevel === 'hard',
+              }"
+            >
+              {{ formatBytes(simulationMetaBytes) }} / 软 {{ formatBytes(META_SOFT_BYTES) }} /
+              硬 {{ formatBytes(META_HARD_BYTES) }}
+            </span>
+            <span v-if="simulationMetaWarnLevel === 'soft'" class="meta-size-soft">
+              超软阈值：引擎会在 tick 中打 warn（可保存，但建议精简）
+            </span>
+            <span v-if="simulationMetaWarnLevel === 'hard'" class="meta-size-hard">
+              超硬阈值：后端会拒绝写入，保存前请先精简
+            </span>
+            <span v-if="simulationMetaJsonError" class="meta-size-soft" :title="simulationMetaJsonError">
+              JSON 不合法：将以纯字符串形式提交
+            </span>
+          </div>
         </el-collapse-item>
       </el-collapse>
     </el-form>
@@ -442,5 +510,21 @@ onMounted(loadAiConfigs)
   max-height: min(70vh, 560px);
   overflow-y: auto;
   padding-right: 4px;
+}
+
+/* M4.2.0 simulation_meta 字节计三级警示色 */
+.meta-size-bar {
+  padding-top: 4px;
+  border-top: 1px dashed var(--ainpc-border);
+}
+.meta-size-ok {
+  color: var(--ainpc-muted);
+}
+.meta-size-soft {
+  color: #d29922;
+}
+.meta-size-hard {
+  color: #f85149;
+  font-weight: 600;
 }
 </style>

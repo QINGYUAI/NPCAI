@@ -73,6 +73,28 @@ const engineLoading = ref(false)
 let engineStatusTimer: ReturnType<typeof setInterval> | null = null
 const engineRunning = computed(() => engineStatus.value?.running === true)
 
+/**
+ * [M4.2.0] 最近一次 simulation_meta 越界告警
+ * - 从 EngineStatus.meta_warns 取最后一条
+ * - 仅在 `at` 变化时弹一次 toast，避免反复骚扰
+ */
+const latestMetaWarn = computed(() => {
+  const list = engineStatus.value?.meta_warns
+  if (!list || list.length === 0) return null
+  return list[list.length - 1] ?? null
+})
+let lastShownMetaWarnAt: string | null = null
+function handleEngineStatusUpdate(next: EngineStatus | null) {
+  engineStatus.value = next
+  const w = next?.meta_warns?.[next.meta_warns.length - 1]
+  if (w && w.at !== lastShownMetaWarnAt) {
+    lastShownMetaWarnAt = w.at
+    const name = w.npc_name || `NPC#${w.npc_id}`
+    const kb = (w.bytes / 1024).toFixed(1)
+    toast.warning(`${name} tick#${w.tick} simulation_meta 达到 ${kb}KB，已超软阈值`)
+  }
+}
+
 /** 节点右键菜单状态（相对画布容器左上角） */
 const ctxMenu = ref<{ visible: boolean; x: number; y: number; npc: SceneNpcLink | null }>({
   visible: false,
@@ -259,7 +281,7 @@ async function onEngineStart() {
       concurrency: 2,
     })
     if (data.code === 0 && data.data) {
-      engineStatus.value = data.data
+      handleEngineStatusUpdate(data.data)
       startEngineStatusTimer()
       /** 启动后自动打开气泡（用户可随时关） */
       if (!bubbleEnabled.value) bubbleEnabled.value = true
@@ -282,7 +304,7 @@ async function onEngineStop(force = false) {
   try {
     const { data } = await stopEngine(activeSceneId.value, force)
     if (data.code === 0) {
-      engineStatus.value = data.data || null
+      handleEngineStatusUpdate(data.data || null)
       stopEngineStatusTimer()
       toast.info(force ? '引擎已强制停止' : '引擎已停止')
     } else {
@@ -302,7 +324,7 @@ async function onEngineStep() {
   try {
     const { data } = await stepEngine(activeSceneId.value, engineDryRun.value)
     if (data.code === 0) {
-      engineStatus.value = data.data || null
+      handleEngineStatusUpdate(data.data || null)
       /** 手动单步后立即刷一次气泡 */
       if (bubbleEnabled.value) void pollStatus()
       toast.success(`已执行 tick #${engineStatus.value?.tick ?? '?'}`)
@@ -322,7 +344,7 @@ async function pollEngineStatus() {
   try {
     const { data } = await getEngineStatus(activeSceneId.value)
     if (data.code === 0) {
-      engineStatus.value = data.data || null
+      handleEngineStatusUpdate(data.data || null)
       /** 后端自停（max_ticks）后，前端同步关定时器 */
       if (!engineStatus.value?.running) {
         stopEngineStatusTimer()
@@ -893,6 +915,7 @@ watch(activeSceneId, (id) => {
     /** 切场景时重置引擎面板状态并拉一次最新状态 */
     stopEngineStatusTimer()
     engineStatus.value = null
+    lastShownMetaWarnAt = null
     void pollEngineStatus().then(() => {
       if (engineStatus.value?.running) startEngineStatusTimer()
     })
@@ -900,6 +923,7 @@ watch(activeSceneId, (id) => {
     destroyGame()
     stopEngineStatusTimer()
     engineStatus.value = null
+    lastShownMetaWarnAt = null
   }
 })
 
@@ -986,6 +1010,13 @@ function categoryLabel(v: string | null | undefined) {
               @click="onEngineStop(false)">⏸</el-button>
           </el-tooltip>
         </el-button-group>
+        <!-- M4.2.0 meta 软阈值告警 -->
+        <el-tooltip v-if="latestMetaWarn" placement="bottom"
+          :content="`NPC#${latestMetaWarn.npc_id} tick#${latestMetaWarn.tick} simulation_meta=${(latestMetaWarn.bytes/1024).toFixed(1)}KB 超软阈值 ${(latestMetaWarn.soft_limit/1024).toFixed(0)}KB，建议精简`">
+          <el-tag type="warning" size="small" effect="dark" class="meta-warn-pill">
+            ⚠ meta {{ (latestMetaWarn.bytes / 1024).toFixed(1) }}KB
+          </el-tag>
+        </el-tooltip>
       </div>
       <div class="flex-1" />
       <div class="flex items-center gap-2">
@@ -1155,6 +1186,16 @@ function categoryLabel(v: string | null | undefined) {
 
 .font-mono-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* M4.2.0 meta-warn 小徽标：让其在引擎控制条末尾更醒目 */
+.meta-warn-pill {
+  margin-left: 2px;
+  animation: meta-warn-flash 1.6s ease-in-out 0s 2 alternate;
+}
+@keyframes meta-warn-flash {
+  from { opacity: 0.6; }
+  to { opacity: 1; }
 }
 
 .sandbox-ctx-menu {

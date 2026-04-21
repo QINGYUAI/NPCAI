@@ -21,6 +21,21 @@ function err(res: Response, http: number, code: string, message: string) {
   return res.status(http).json({ code: -1, error: code, message });
 }
 
+/**
+ * [M4.2.0] 若 scheduler 近期有 simulation_meta 软阈值越界，在响应头带 X-Meta-Warn: 1
+ * - 前端据此显示气泡提示，不改变业务语义
+ * - 这里只负责写头；抑制频次由 scheduler.hasFreshMetaWarn 控制
+ */
+function attachMetaWarnHeader(
+  res: Response,
+  scheduler: { hasFreshMetaWarn: () => boolean } | null | undefined,
+) {
+  if (scheduler && scheduler.hasFreshMetaWarn()) {
+    res.setHeader('X-Meta-Warn', '1');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Meta-Warn');
+  }
+}
+
 function toInt(v: unknown, fallback: number): number {
   if (v === undefined || v === null || v === '') return fallback;
   const n = Number(v);
@@ -83,11 +98,13 @@ export async function startEngine(req: Request, res: Response) {
     /** 幂等：已在跑则返回当前状态 */
     let scheduler = getScheduler(scene_id);
     if (scheduler && scheduler.isRunning) {
+      attachMetaWarnHeader(res, scheduler);
       return res.json({ code: 0, data: scheduler.status() });
     }
 
     scheduler = createScheduler(scene_id, parsed);
     await scheduler.start();
+    attachMetaWarnHeader(res, scheduler);
     return res.json({ code: 0, data: scheduler.status() });
   } catch (e) {
     console.error('startEngine:', e);
@@ -140,9 +157,11 @@ export async function getEngineStatus(req: Request, res: Response) {
         errors_recent: 0,
         cost_usd_total: 0,
         config: null,
+        meta_warns: [],
       },
     });
   }
+  attachMetaWarnHeader(res, scheduler);
   return res.json({ code: 0, data: scheduler.status() });
 }
 
@@ -201,5 +220,6 @@ export async function stepEngine(req: Request, res: Response) {
     });
   }
   await scheduler.stepOnce();
+  attachMetaWarnHeader(res, scheduler);
   return res.json({ code: 0, data: scheduler.status() });
 }

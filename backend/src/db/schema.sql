@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS ai_config (
   model VARCHAR(128) DEFAULT 'gpt-3.5-turbo' COMMENT '模型名称',
   temperature DECIMAL(3,2) DEFAULT 0.7 COMMENT '温度参数 0-2',
   max_tokens INT DEFAULT 2000 COMMENT '最大生成 token 数',
+  budget_tokens_per_tick INT DEFAULT 2000 COMMENT '[M4.2.0] 每 NPC 每 tick 的 token 预算上限；超支下一 tick 自动 skip',
   is_default TINYINT(1) DEFAULT 0 COMMENT '是否默认配置 0否 1是',
   status TINYINT(1) DEFAULT 1 COMMENT '状态 0禁用 1启用',
   remark VARCHAR(512) DEFAULT NULL COMMENT '备注说明',

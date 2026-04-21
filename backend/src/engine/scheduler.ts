@@ -12,6 +12,7 @@ import { runGraph } from './graph/build.js';
 import type {
   EngineConfig,
   EngineStatus,
+  MetaWarn,
   NpcRow,
   SceneRow,
   SimulationMetaV1,
@@ -20,6 +21,11 @@ import type {
 /** simulation_meta 大小阈值：软 64KB 仅警告，硬 256KB 拒绝写入 */
 const META_SOFT_BYTES = 64 * 1024;
 const META_HARD_BYTES = 256 * 1024;
+
+/** [M4.2.0] meta_warns 最近 N 条滚动窗口；N 条以外自动丢弃 */
+const META_WARN_RING_SIZE = 20;
+/** [M4.2.0] "新鲜"告警阈值：此窗口内产生过任一 warn 则触发 X-Meta-Warn */
+const META_WARN_FRESH_MS = 5 * 60 * 1000;
 
 /** 默认每场景保留最近 N 条 tick_log；超出 async prune */
 const LOG_RETENTION_DEFAULT = Number(process.env.ENGINE_LOG_RETENTION) || 2000;
@@ -38,6 +44,14 @@ export class SceneScheduler {
   private npcCount = 0;
   private errorsRecent = 0;
   private costUsdTotal = 0;
+  /** [M4.2.0] 最近 N 条 simulation_meta 软阈值越界告警（滚动窗口） */
+  private metaWarns: MetaWarn[] = [];
+  /**
+   * [M4.2.0] 每个 NPC 上一 tick 的真实 token 总消耗（prompt+completion）
+   * - 数据来源：M4.2.1 真实 token 记账完成后，由 tick 末尾统计写入
+   * - M4.2.0 暂时保持为空，budget skip 路径存在但不会触发（兼容开发）
+   */
+  private lastTickTokensByNpc: Map<number, number> = new Map();
   /** 允许硬停时中断正在进行的推理 */
   private abortController: AbortController | null = null;
 
@@ -103,7 +117,27 @@ export class SceneScheduler {
       errors_recent: this.errorsRecent,
       cost_usd_total: this.costUsdTotal,
       config: this.cfg,
+      meta_warns: this.metaWarns.slice(),
     };
+  }
+
+  /** [M4.2.0] 最近 METAWARN_FRESH_MS 毫秒内是否有过 meta 越界告警（供 controller 打 X-Meta-Warn 响应头） */
+  hasFreshMetaWarn(): boolean {
+    if (this.metaWarns.length === 0) return false;
+    const now = Date.now();
+    for (let i = this.metaWarns.length - 1; i >= 0; i -= 1) {
+      const w = this.metaWarns[i];
+      if (!w) continue;
+      if (now - new Date(w.at).getTime() <= META_WARN_FRESH_MS) return true;
+    }
+    return false;
+  }
+
+  private pushMetaWarn(warn: MetaWarn): void {
+    this.metaWarns.push(warn);
+    if (this.metaWarns.length > META_WARN_RING_SIZE) {
+      this.metaWarns.splice(0, this.metaWarns.length - META_WARN_RING_SIZE);
+    }
   }
 
   /** 外部调用：跑一次 tick（供「单步」按钮 / 测试使用） */
@@ -165,10 +199,48 @@ export class SceneScheduler {
 
     const neighbors = npcs.map((n) => ({ id: n.id, name: n.name }));
 
+    /**
+     * [M4.2.0] 批量加载本 tick 相关 ai_config 的 budget_tokens_per_tick
+     * - 0 或 null = 不限
+     * - 预算检查放在每个 NPC runGraph 之前；超支则跳过并记 'skipped'
+     */
+    const budgetMap = await loadBudgetsByAiConfigIds(
+      Array.from(new Set(npcs.map((n) => n.ai_config_id))),
+    );
+
     /** 并发池：Promise.all + 分片 */
     await runWithPool(npcs, this.cfg.concurrency, async (npc) => {
       if (signal.aborted) return;
       const npcStart = Date.now();
+
+      /** [M4.2.0] 预算检查：上一 tick 消耗 > budget 则本 tick 直接 skip */
+      const budget = budgetMap.get(npc.ai_config_id) ?? 0;
+      const lastTokens = this.lastTickTokensByNpc.get(npc.id) ?? 0;
+      if (budget > 0 && lastTokens > budget) {
+        const msg = `budget exceeded: last=${lastTokens} > budget=${budget}`;
+        await persistNpcTick({
+          scene_id: this.scene_id,
+          npc_id: npc.id,
+          tick: tickNo,
+          started_at: new Date(npcStart),
+          finished_at: new Date(),
+          status: 'skipped',
+          input_summary: `tick=${tickNo} npc=${npc.name}`,
+          output_meta: null,
+          duration_ms: Date.now() - npcStart,
+          error_message: msg,
+        }).catch((e) => console.warn('[engine] 记录 skipped 日志失败:', e));
+        bus.emitEvent({
+          type: 'error',
+          scene_id: this.scene_id,
+          tick: tickNo,
+          npc_id: npc.id,
+          message: msg,
+        });
+        /** 预算 skip 不消耗本 tick tokens，清零使下一 tick 继续尝试 */
+        this.lastTickTokensByNpc.set(npc.id, 0);
+        return;
+      }
       try {
         const result = await runGraph({
           scene,
@@ -179,6 +251,8 @@ export class SceneScheduler {
           signal,
         });
         this.costUsdTotal += result.cost_usd || 0;
+        /** [M4.2.0] 记录 tokens 供下一 tick budget 判定；dry_run / M4.2.0 为 0 */
+        this.lastTickTokensByNpc.set(npc.id, Number(result.tokens ?? 0));
 
         const metaStr = serializeMeta(result.nextMeta);
         if (metaStr.byteLength > META_HARD_BYTES) {
@@ -206,8 +280,18 @@ export class SceneScheduler {
         });
 
         if (metaStr.byteLength > META_SOFT_BYTES) {
+          const warn: MetaWarn = {
+            scene_id: this.scene_id,
+            npc_id: npc.id,
+            npc_name: npc.name,
+            tick: tickNo,
+            bytes: metaStr.byteLength,
+            soft_limit: META_SOFT_BYTES,
+            at: new Date().toISOString(),
+          };
+          this.pushMetaWarn(warn);
           console.warn(
-            `[engine] scene=${this.scene_id} npc=${npc.id} meta 超软阈值 ${META_SOFT_BYTES}B`,
+            `[engine] scene=${this.scene_id} npc=${npc.id} meta 超软阈值 ${META_SOFT_BYTES}B（实际 ${metaStr.byteLength}B）`,
           );
         }
       } catch (err) {
@@ -277,6 +361,31 @@ async function runWithPool<T>(
     }
   });
   await Promise.all(workers);
+}
+
+/**
+ * [M4.2.0] 批量加载 ai_config 的 budget_tokens_per_tick
+ * - null / 非正数统一视为 0（不限）
+ * - 表结构未迁移时，返回的行里读不到这一列，兜底为 0，不阻塞 tick
+ */
+async function loadBudgetsByAiConfigIds(ids: number[]): Promise<Map<number, number>> {
+  const map = new Map<number, number>();
+  if (ids.length === 0) return map;
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, budget_tokens_per_tick FROM ai_config WHERE id IN (${placeholders})`,
+      ids,
+    );
+    for (const r of rows as { id: number; budget_tokens_per_tick: number | null }[]) {
+      const b = Number(r.budget_tokens_per_tick ?? 0);
+      map.set(r.id, Number.isFinite(b) && b > 0 ? b : 0);
+    }
+  } catch (e) {
+    /** 列不存在（未跑迁移）或查询异常：全部视为不限，记 warn 即可 */
+    console.warn('[engine] loadBudgetsByAiConfigIds 查询失败，全部视为不限：', (e as Error).message);
+  }
+  return map;
 }
 
 /** 加载场景基本信息与其下的 NPC */

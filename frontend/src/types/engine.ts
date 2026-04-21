@@ -21,6 +21,19 @@ export interface EngineStatus {
   cost_usd_total: number
   /** 未启动时为 null */
   config: EngineConfig | null
+  /** [M4.2.0] 最近 N 条 simulation_meta 软阈值越界记录（滚动窗口） */
+  meta_warns?: MetaWarn[]
+}
+
+/** [M4.2.0] simulation_meta 软阈值越界告警（滚动窗口条目） */
+export interface MetaWarn {
+  scene_id: number
+  npc_id: number
+  npc_name?: string
+  tick: number
+  bytes: number
+  soft_limit: number
+  at: string
 }
 
 export interface TickLogRow {
