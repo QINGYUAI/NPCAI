@@ -23,6 +23,8 @@ import {
   getEngineStatus,
   openEngineWs,
   reflectOnce,
+  createSceneEvent,
+  listSceneEvents,
 } from '../api/engine'
 import type {
   EngineStatus,
@@ -36,8 +38,17 @@ import type {
 import type { Scene, SceneDetail, SceneNpcLink } from '../types/scene'
 import type { TimelineTickRow, TimelineNpcEntry } from '../types/timeline'
 import type { ReflectionRingEntry, WsReflectionCreatedMsg } from '../types/reflection'
+import type {
+  CreateSceneEventBody,
+  EventRingEntry,
+  SceneEventRow,
+  WsSceneEventCreatedMsg,
+} from '../types/event'
+import { EVENT_PRESETS } from '../types/event'
 import SandboxTimeline from './SandboxTimeline.vue'
 import SandboxReflections from './SandboxReflections.vue'
+import SandboxEvents from './SandboxEvents.vue'
+import SandboxEventInjectorDialog from './SandboxEventInjectorDialog.vue'
 import { NPC_CATEGORIES } from '../constants/npc'
 import { resolveAvatarUrl } from '../utils/avatar'
 import {
@@ -131,6 +142,19 @@ const reflectionDrawerVisible = ref(false)
 /** 手动反思按钮 loading；key = npc_id 以允许多 NPC 并发（虽然后端是同步，但前端不做互斥更好） */
 const reflectingNpcs = ref<Set<number>>(new Set())
 
+/**
+ * [M4.2.4.c] 场景事件 ring buffer：最多 20 条
+ * - 数据源：首屏 GET /api/scene/:id/events（补发历史）+ WS `scene.event.created`（实时）+ POST 响应（单客户端即时回显）
+ * - key=event_id；WS / REST / POST 重复时后写覆盖保证幂等
+ * - 切场景 / 组件卸载清空
+ */
+const EVENT_RING_MAX = 20
+const eventEntries = ref<EventRingEntry[]>([])
+const eventDrawerVisible = ref(false)
+const eventDialogVisible = ref(false)
+/** 预设按钮 loading：防快连点重复提交（同 id 互斥） */
+const eventSubmitting = ref<Set<string>>(new Set())
+
 function resetTimeline() {
   timelineEntries.value = []
   sessionTokens.value = 0
@@ -139,6 +163,10 @@ function resetTimeline() {
   reflectionEntries.value = []
   reflectionDrawerVisible.value = false
   reflectingNpcs.value = new Set()
+  eventEntries.value = []
+  eventDrawerVisible.value = false
+  eventDialogVisible.value = false
+  eventSubmitting.value = new Set()
 }
 
 /** 顶栏累计标签展示：$ 保留 4 位；未知（null）降级为 `$?` */
@@ -223,6 +251,124 @@ function onReflectionPillClick() {
 }
 function clearReflections() {
   reflectionEntries.value = []
+}
+
+/**
+ * [M4.2.4.c] 把 SceneEventRow / WsSceneEventCreatedMsg 压扁为 ring buffer entry，
+ * 以 id 为 key 做后写覆盖（幂等）；保持按 received_at 升序（渲染时倒序）
+ */
+function upsertEventRing(entry: EventRingEntry) {
+  const list = eventEntries.value.slice().filter((e) => e.key !== entry.key)
+  list.push(entry)
+  list.sort((a, b) => a.received_at.localeCompare(b.received_at))
+  if (list.length > EVENT_RING_MAX) list.splice(0, list.length - EVENT_RING_MAX)
+  eventEntries.value = list
+}
+
+function rowToEntry(row: SceneEventRow): EventRingEntry {
+  return {
+    key: row.id,
+    scene_id: row.scene_id,
+    type: row.type,
+    actor: row.actor,
+    content: row.content,
+    payload: row.payload,
+    visible_npcs: row.visible_npcs,
+    received_at: typeof row.created_at === 'string' ? row.created_at : new Date(row.created_at).toISOString(),
+    consumed_tick: row.consumed_tick,
+  }
+}
+
+/** [M4.2.4.c] WS scene.event.created → 压入 ring buffer */
+function applyWsSceneEvent(msg: WsSceneEventCreatedMsg) {
+  upsertEventRing({
+    key: msg.event_id,
+    scene_id: msg.scene_id,
+    type: msg.event_type,
+    actor: msg.actor,
+    content: msg.content,
+    payload: msg.payload,
+    visible_npcs: msg.visible_npcs,
+    received_at: msg.ts || msg.at,
+    consumed_tick: null,
+  })
+}
+
+/**
+ * [M4.2.4.c] 首屏 / 场景切换 / WS 首次 open 时补发最近事件
+ * - 仅保留最近 EVENT_RING_MAX 条；按 id 升序入 buffer，最新自然在下（渲染时倒序显示）
+ */
+async function loadSceneEvents(sceneId: number) {
+  try {
+    const resp = await listSceneEvents(sceneId, { limit: EVENT_RING_MAX })
+    const data = resp.data?.data
+    if (!data?.list) return
+    /** 后端返回 DESC；入 ring buffer 时转成按时间升序 */
+    const entries = data.list.map(rowToEntry).reverse()
+    for (const e of entries) upsertEventRing(e)
+  } catch (e) {
+    console.warn('[Sandbox] loadSceneEvents 失败（忽略，WS 会继续补推）:', e)
+  }
+}
+
+/** [M4.2.4.c] 预设事件：顶栏快捷按钮调用（不开表单直接 POST） */
+async function onEventPreset(presetId: string) {
+  const preset = EVENT_PRESETS.find((p) => p.id === presetId)
+  if (!preset || !activeSceneId.value) return
+  if (eventSubmitting.value.has(presetId)) return
+  const next = new Set(eventSubmitting.value)
+  next.add(presetId)
+  eventSubmitting.value = next
+  try {
+    const resp = await createSceneEvent(activeSceneId.value, preset.body)
+    const row = resp.data?.data
+    if (resp.data?.code === 0 && row) {
+      upsertEventRing(rowToEntry(row))
+      toast.success(`${preset.emoji} ${preset.label} 事件已注入 #${row.id}`)
+    } else {
+      toast.error(resp.data?.message || '事件注入失败')
+    }
+  } catch (e) {
+    toast.error(`事件注入失败：${(e as Error).message || '未知错误'}`)
+  } finally {
+    const back = new Set(eventSubmitting.value)
+    back.delete(presetId)
+    eventSubmitting.value = back
+  }
+}
+
+/** [M4.2.4.c] 打开「自定义事件」对话框 */
+function onEventCustomClick() {
+  if (!activeSceneId.value) {
+    toast.warning('请先选择场景')
+    return
+  }
+  eventDialogVisible.value = true
+}
+
+/** [M4.2.4.c] 对话框提交 → POST，成功后本地回显 + 关窗 */
+async function submitCustomEvent(body: CreateSceneEventBody) {
+  if (!activeSceneId.value) return
+  try {
+    const resp = await createSceneEvent(activeSceneId.value, body)
+    const row = resp.data?.data
+    if (resp.data?.code === 0 && row) {
+      upsertEventRing(rowToEntry(row))
+      toast.success(`✅ 事件已注入 #${row.id}`)
+      eventDialogVisible.value = false
+    } else {
+      toast.error(resp.data?.message || '事件注入失败')
+    }
+  } catch (e) {
+    toast.error(`事件注入失败：${(e as Error).message || '未知错误'}`)
+  }
+}
+
+function onEventPillClick() {
+  eventDrawerVisible.value = !eventDrawerVisible.value
+}
+function clearEvents() {
+  eventEntries.value = []
 }
 
 /**
@@ -637,6 +783,7 @@ function startEngineObserver() {
     onTickEnd: (msg) => applyWsTickEnd(msg),
     onMetaWarn: (msg) => applyWsMetaWarn(msg),
     onReflection: (msg) => applyWsReflection(msg),
+    onSceneEvent: (msg) => applyWsSceneEvent(msg),
     onError: (msg) => {
       if (engineStatus.value) {
         engineStatus.value = {
@@ -1244,6 +1391,8 @@ watch(activeSceneId, (id) => {
     engineStatus.value = null
     lastShownMetaWarnAt = null
     resetTimeline()
+    /** [M4.2.4.c] 场景事件首屏补发（与引擎状态轮询并行） */
+    void loadSceneEvents(id)
     void pollEngineStatus().then(() => {
       if (engineStatus.value?.running) startEngineObserver()
     })
@@ -1264,6 +1413,8 @@ onMounted(async () => {
     /** 恢复引擎状态：若后端已在跑，自动挂起观察者（WS 优先，降级轮询） */
     await pollEngineStatus()
     if (engineStatus.value?.running) startEngineObserver()
+    /** [M4.2.4.c] 首次进入页面也补发最近事件（与引擎是否运行无关） */
+    void loadSceneEvents(activeSceneId.value)
   }
 })
 
@@ -1384,6 +1535,39 @@ function categoryLabel(v: string | null | undefined) {
             @click="onReflectionPillClick">
             🧘 {{ reflectionEntries.length }}
           </el-tag>
+        </el-tooltip>
+        <!-- [M4.2.4.c] 事件徽章：WS scene.event.created 或本端 POST 后 +1，点击展开抽屉 -->
+        <el-tooltip placement="bottom"
+          content="本会话收到的场景事件条数（含首屏补发）。事件会被引擎下一 tick 相应 NPC 的 plan prompt 消费">
+          <el-tag size="small" type="info" effect="plain" class="event-pill"
+            @click="onEventPillClick">
+            📢 {{ eventEntries.length }}
+          </el-tag>
+        </el-tooltip>
+      </div>
+      <!-- [M4.2.4.c] 事件注入控制条：2 个快捷预设 + 1 个自定义对话框入口 -->
+      <div class="flex items-center gap-2 px-2 py-1 rounded border border-[var(--ainpc-border)] bg-[rgba(13,17,23,0.45)]">
+        <span class="text-xs text-[var(--ainpc-muted)]">事件</span>
+        <el-tooltip content="注入「下雨」天气事件（全场景可见）" placement="top">
+          <el-button
+            size="small"
+            :disabled="!activeSceneId"
+            :loading="eventSubmitting.has('rain')"
+            @click="onEventPreset('rain')"
+          >🌧️ 下雨</el-button>
+        </el-tooltip>
+        <el-tooltip content="注入「地震」剧情事件（全场景可见）" placement="top">
+          <el-button
+            size="small"
+            :disabled="!activeSceneId"
+            :loading="eventSubmitting.has('earthquake')"
+            @click="onEventPreset('earthquake')"
+          >🌋 地震</el-button>
+        </el-tooltip>
+        <el-tooltip content="打开自定义事件对话框（可选 4 类型、可定向投递）" placement="top">
+          <el-button size="small" type="primary" :disabled="!activeSceneId" @click="onEventCustomClick">
+            💬 自定义事件
+          </el-button>
         </el-tooltip>
       </div>
       <div class="flex-1" />
@@ -1519,6 +1703,21 @@ function categoryLabel(v: string | null | undefined) {
       :entries="reflectionEntries"
       v-model:visible="reflectionDrawerVisible"
       @clear="clearReflections"
+    />
+
+    <!-- [M4.2.4.c] 场景事件抽屉：WS / REST / POST 三路数据同进 ring buffer -->
+    <SandboxEvents
+      :entries="eventEntries"
+      v-model:visible="eventDrawerVisible"
+      @clear="clearEvents"
+    />
+
+    <!-- [M4.2.4.c] 自定义事件注入对话框 -->
+    <SandboxEventInjectorDialog
+      v-model:visible="eventDialogVisible"
+      :scene-id="activeSceneId"
+      :npc-options="detail?.npcs ?? []"
+      @submit="submitCustomEvent"
     />
 
     <p class="text-xs text-[var(--ainpc-muted)] mt-4">
@@ -1659,6 +1858,17 @@ function categoryLabel(v: string | null | undefined) {
   margin-left: 2px;
 }
 .reflection-pill:hover {
+  filter: brightness(1.15);
+}
+
+/* [M4.2.4.c] 事件徽章：与反思徽章同样的 hover/点击手感 */
+.event-pill {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  margin-left: 2px;
+}
+.event-pill:hover {
   filter: brightness(1.15);
 }
 @keyframes meta-warn-flash {

@@ -16,6 +16,12 @@ import type {
   WsErrorMsg,
 } from '../types/engine.js'
 import type { ReflectApiResp, WsReflectionCreatedMsg } from '../types/reflection.js'
+import type {
+  CreateSceneEventBody,
+  ListSceneEventsResp,
+  SceneEventRow,
+  WsSceneEventCreatedMsg,
+} from '../types/event.js'
 
 export function startEngine(params: StartEngineParams) {
   return api.post<ApiResponse<EngineStatus>>('/engine/start', params)
@@ -53,6 +59,34 @@ export function reflectOnce(params: { scene_id: number; npc_id: number }) {
 }
 
 /**
+ * [M4.2.4.c] POST /api/scene/:id/events —— 注入一条场景事件
+ * - 后端同步写库 + WS 广播 scene.event.created；返回完整 SceneEventRow
+ * - 单客户端 caller：响应 body 可直接入 ring buffer（无需等 WS 回环）
+ */
+export function createSceneEvent(scene_id: number, body: CreateSceneEventBody) {
+  return api.post<ApiResponse<SceneEventRow>>(`/scene/${scene_id}/events`, body)
+}
+
+/**
+ * [M4.2.4.c] GET /api/scene/:id/events —— 查询最近事件（首屏/重连补发）
+ * - limit 默认 50，上限 200；since 用于增量同步（id > since）
+ */
+export function listSceneEvents(
+  scene_id: number,
+  params?: { limit?: number; since?: number },
+) {
+  return api.get<ApiResponse<ListSceneEventsResp>>(`/scene/${scene_id}/events`, { params })
+}
+
+/**
+ * [M4.2.4.c] DELETE /api/scene/:id/events/:eid —— 手动删除一条事件
+ * - 当前版本 UI 不暴露该入口，保留 API 供后续右键菜单或工具面板使用
+ */
+export function deleteSceneEvent(scene_id: number, event_id: number) {
+  return api.delete<ApiResponse<{ id: number }>>(`/scene/${scene_id}/events/${event_id}`)
+}
+
+/**
  * [M4.2.1.b] 把 http(s)://host:port/api 反推成 ws(s)://host:port，拼接 ws_endpoint
  * - VITE_API_BASE 形如 "http://localhost:3000/api"
  * - 支持自定义覆盖 VITE_WS_BASE（如反向代理场景）
@@ -82,6 +116,8 @@ export interface EngineWsHandlers {
   onMetaWarn?: (e: WsMetaWarnMsg) => void
   /** [M4.2.3.c] 反思生成事件；仅 status='generated' 时后端会推 */
   onReflection?: (e: WsReflectionCreatedMsg) => void
+  /** [M4.2.4.c] 场景事件创建广播；POST /api/scene/:id/events 成功后同步触发 */
+  onSceneEvent?: (e: WsSceneEventCreatedMsg) => void
   onConnectionChange?: (state: WsConnectionState) => void
 }
 
@@ -168,6 +204,7 @@ export function openEngineWs(
         case 'error': handlers.onError?.(msg); return
         case 'meta.warn': handlers.onMetaWarn?.(msg); return
         case 'reflection.created': handlers.onReflection?.(msg); return
+        case 'scene.event.created': handlers.onSceneEvent?.(msg); return
         default: return
       }
     })

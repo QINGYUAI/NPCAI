@@ -2,6 +2,7 @@
  * 引擎相关类型（与后端 src/engine/types.ts 保持语义一致）
  */
 import type { WsReflectionCreatedMsg } from './reflection'
+import type { WsSceneEventCreatedMsg } from './event'
 
 export interface EngineConfig {
   interval_ms: number
@@ -87,6 +88,7 @@ export type WsEngineMsg =
   | WsErrorMsg
   | WsMetaWarnMsg
   | WsReflectionCreatedMsg
+  | WsSceneEventCreatedMsg
   | (WsBaseMsg & { type: 'ping' | 'pong' })
 
 /** [M4.2.1.b] WS 客户端连接状态 */
