@@ -3,3 +3,6 @@ node_modules
 *.log
 dist
 uploads/
+# [M4.2.2] embedding 磁盘缓存（SHA1-keyed，运行时产生，切勿入库）
+.cache/
+

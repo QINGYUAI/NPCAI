@@ -29,13 +29,20 @@ export async function getAiLogs(req: Request, res: Response) {
       params.push(source.trim());
     }
 
+    /**
+     * mysql2 prepared statement 对 LIMIT/OFFSET placeholder 的支持在部分版本下不稳定
+     * (报 "Incorrect arguments to mysqld_stmt_execute")，这里把已 sanitize 的整数内联到 SQL，
+     * 不走占位符。pageSize/offset 均在上方走过 Math.min / Math.max + Number，无 SQL 注入风险
+     */
+    const safePageSize = Math.max(1, Math.min(100, Math.trunc(Number(pageSize) || 1)));
+    const safeOffset = Math.max(0, Math.trunc(Number(offset) || 0));
     const [rows] = await pool.execute(
       `SELECT id, ai_config_id, api_type, provider, model, request_info, response_info, request_content, response_content, duration_ms, status, error_message, source, context, created_at
        FROM ai_call_log
        WHERE ${where}
        ORDER BY id DESC
-       LIMIT ? OFFSET ?`,
-      [...params, pageSize, offset]
+       LIMIT ${safePageSize} OFFSET ${safeOffset}`,
+      params
     );
 
     const [countRows] = await pool.execute(
