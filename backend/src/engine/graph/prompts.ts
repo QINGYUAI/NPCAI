@@ -53,8 +53,14 @@ export function buildPlanPrompt(params: {
   tick: number;
   /** [M4.2.2.b] 由 memory-retrieve 节点生成的相关记忆段，可选 */
   memoryBlock?: string;
+  /**
+   * [M4.2.4.a] 由 event-intake 节点生成的场景事件段（拉票 Q5a：user 消息头部注入）
+   * - 放在【场景】之前，确保 LLM 在理解角色位置前先感知世界变动
+   * - 空字符串 / undefined 均等效于不注入
+   */
+  eventBlock?: string;
 }): { system: string; user: string } {
-  const { scene, npc, neighbors, prevSummary, tick, memoryBlock } = params;
+  const { scene, npc, neighbors, prevSummary, tick, memoryBlock, eventBlock } = params;
   const system = `${SYSTEM_PREFIX}
 【角色设定】
 ${npc.system_prompt || `你的名字是「${npc.name}」。`}
@@ -63,7 +69,7 @@ ${npc.system_prompt || `你的名字是「${npc.name}」。`}
 
 【当前任务】为下一小段时间（1-3 步）做一个轻量计划。`;
 
-  const user = `【场景】${scene.name}${scene.description ? `（${scene.description}）` : ''}
+  const user = `${eventBlock || ''}【场景】${scene.name}${scene.description ? `（${scene.description}）` : ''}
 【同场景角色】${neighbors.map((n) => n.name).join('、') || '无'}
 【记忆摘要】${prevSummary || '（无）'}
 ${memoryBlock || ''}【当前 tick】${tick}
