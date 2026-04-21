@@ -35,6 +35,13 @@ export interface EngineStatus {
    * 前端据此优先走 WS，不支持则回落 3s 轮询
    */
   ws_endpoint?: string;
+  /**
+   * [M4.2.2.b] 记忆检索近期是否发生过降级（Qdrant 不可达 / embed 失败）
+   * - 最近 5 分钟内有过任一 NPC 的 retrieve.degraded=true 即为 true
+   * - 前端可据此在 UI 上展示"🧠 降级"提示（M4.2.2.c 才接 UI）
+   * - 不影响功能，仅是可观测性信号
+   */
+  memory_degraded?: boolean;
 }
 
 /** [M4.2.0] simulation_meta 超软阈值告警记录 */

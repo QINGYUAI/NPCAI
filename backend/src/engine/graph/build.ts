@@ -12,8 +12,11 @@ import type { RowDataPacket } from 'mysql2';
 import { z } from 'zod';
 import { pool } from '../../db/connection.js';
 import { chatCompletion } from '../../utils/llmClient.js';
+import { retrieveMemories } from '../memory/retrieve.js';
+import { storeMemory } from '../memory/store.js';
 import type { NpcRow, SceneRow, SimulationMetaV1 } from '../types.js';
 import {
+  buildMemoryBlock,
   buildMemoryPrompt,
   buildPlanPrompt,
   buildSpeakPrompt,
@@ -40,6 +43,12 @@ export interface GraphOutput {
    * - scheduler 据此 + ai_config.budget_tokens_per_tick 在下一 tick 执行 budget 判定
    */
   tokens?: number;
+  /**
+   * [M4.2.2.b] 记忆子系统是否走了降级路径（Qdrant 不可达 / embed 失败）
+   * - true 时 scheduler 会冒泡 memory_degraded 标记到 status；不影响本 tick 产出
+   * - store 失败不影响此标记（store 失败也降级写 MySQL，不算"retrieve 不可用"）
+   */
+  memory_degraded?: boolean;
 }
 
 const planSchema = z
@@ -107,13 +116,36 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     }
   };
 
+  /**
+   * [M4.2.2.b] memory-retrieve：plan 之前跑一次，产出「相关记忆」供 plan/speak 共享
+   * - 内部已有三级降级（Qdrant→MySQL→空）；外层只关心 degraded 标记冒泡到 scheduler
+   */
+  const prevSummary = prevMeta?.memory_summary ?? '';
+  const retrieveResult = await retrieveMemories({
+    scene: input.scene,
+    npc,
+    neighbors,
+    prevSummary,
+    tick,
+    aiCfg: {
+      id: aiCfg.id,
+      api_key: aiCfg.api_key,
+      base_url: aiCfg.base_url,
+      provider: aiCfg.provider,
+    },
+    signal,
+    onMetrics,
+  });
+  const memoryBlock = buildMemoryBlock(retrieveResult.entries);
+
   /** plan 节点 */
   const planPrompt = buildPlanPrompt({
     scene: input.scene,
     npc,
     neighbors,
-    prevSummary: prevMeta?.memory_summary ?? '',
+    prevSummary,
     tick,
+    memoryBlock,
   });
   const planResult = await callWithRetry(
     aiCfg,
@@ -127,7 +159,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
 
   /** speak 节点：plan 失败则用兜底计划 */
   const plan = planResult?.plan ?? (prevMeta?.plan?.length ? prevMeta.plan : [`观察 ${input.scene.name}`]);
-  const speakPrompt = buildSpeakPrompt({ scene: input.scene, npc, plan, tick });
+  const speakPrompt = buildSpeakPrompt({ scene: input.scene, npc, plan, tick, memoryBlock });
   const speakResult = await callWithRetry(
     aiCfg,
     speakPrompt.system,
@@ -143,8 +175,38 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     throw new Error('speak 节点解析失败且重试无果');
   }
 
-  /** memory 节点（可选）：失败不影响整体 */
-  let memorySummary = prevMeta?.memory_summary ?? '';
+  /**
+   * [M4.2.2.b] memory-store：say/action 各一条（Q2 a 方案锁定）
+   * - 完全 fire-and-forget 的语义上由 storeMemory 内部吞错保证；这里 await 只为拿到状态
+   * - store 失败不冒泡 degraded（degraded 语义仅代表 retrieve 能力受损）
+   */
+  if (speakResult.latest_action) {
+    await storeMemory({
+      scene: input.scene,
+      npc,
+      tick,
+      type: 'observation',
+      content: `[${speakResult.emotion ?? 'neutral'}] ${speakResult.latest_action}`,
+      aiCfg: { id: aiCfg.id, api_key: aiCfg.api_key, base_url: aiCfg.base_url, provider: aiCfg.provider },
+      signal,
+      onMetrics,
+    });
+  }
+  if (speakResult.latest_say) {
+    await storeMemory({
+      scene: input.scene,
+      npc,
+      tick,
+      type: 'dialogue',
+      content: speakResult.latest_say,
+      aiCfg: { id: aiCfg.id, api_key: aiCfg.api_key, base_url: aiCfg.base_url, provider: aiCfg.provider },
+      signal,
+      onMetrics,
+    });
+  }
+
+  /** memory 摘要节点（保留）：失败不影响整体 */
+  let memorySummary = prevSummary;
   try {
     const memPrompt = buildMemoryPrompt({
       npc,
@@ -174,7 +236,12 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     emotion: speakResult.emotion,
     plan: plan.slice(0, 3),
     memory_summary: memorySummary,
-    debug: { live: true, tick, node_retry: { plan: planResult ? 0 : 1 } },
+    debug: {
+      live: true,
+      tick,
+      node_retry: { plan: planResult ? 0 : 1 },
+      memory: { retrieved: retrieveResult.entries.length, degraded: retrieveResult.degraded },
+    },
   };
 
   return {
@@ -182,6 +249,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     inputSummary,
     tokens: tickMetrics.tokens,
     cost_usd: tickMetrics.costKnown ? tickMetrics.cost : 0,
+    memory_degraded: retrieveResult.degraded,
   };
 }
 

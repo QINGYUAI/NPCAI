@@ -10,6 +10,7 @@
 | --- | --- | --- | --- |
 | 0.1 | 2026-04-21 | AINPC-Dev | 初稿，拉票关键设计点：嵌入时机 / 检索 query 构造 / memory content 粒度 / 前端 Drawer 是否随版发布 / 保留策略 |
 | 0.2 | 2026-04-21 | AINPC-Dev | **评审结论录入**：业主选择全默认方案 `Q1 a, Q2 a, Q3 a, Q4 a, Q5 a`。即：retrieve query = `prevSummary + 同场 NPC 名`；store 触发 = say/action 各一条；写入 = 同步双写；Embed cache = 磁盘文件 + 内存 LRU；前端 = 顶栏 🧠 薄徽章（不做 Drawer）。可进入实施。 |
+| 0.3 | 2026-04-21 | AINPC-Dev | **✅ M4.2.2.a 数据层 / M4.2.2.b Engine 节点完成**（roadmap v0.8）。a 批次：`npc_memory` 表 + `QdrantMemoryStore`（ensure/upsert/search/delete/health；`QdrantUnavailableError` 供降级）+ `embedText` 磁盘 LRU 缓存（SHA1 key / 30 天 TTL）。b 批次：`engine/memory/retrieve.ts` + `store.ts` + `types.ts`；`buildMemoryBlock` 注入 plan/speak 两个 prompt；`graph/build.ts` 按 **retrieve → plan → speak → store(say/action) → memory-summary** 串联；三级降级矩阵（Qdrant→MySQL importance→空）；`scheduler.memoryDegradedAt` + `EngineStatus.memory_degraded`（5 分钟新鲜窗口）；新增 11 条单测（retrieve 4 / store 4 / ruleBasedImportance 3），后端 **67/67** + tsc build 全绿。**待办**：M4.2.2.c 前端顶栏 🧠 徽章 + live LLM smoke（需切 OpenAI embedding provider，DeepSeek 不支持 embeddings）。 |
 
 ---
 

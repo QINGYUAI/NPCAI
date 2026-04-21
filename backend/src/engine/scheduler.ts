@@ -27,6 +27,9 @@ const META_WARN_RING_SIZE = 20;
 /** [M4.2.0] "新鲜"告警阈值：此窗口内产生过任一 warn 则触发 X-Meta-Warn */
 const META_WARN_FRESH_MS = 5 * 60 * 1000;
 
+/** [M4.2.2.b] 记忆降级信号的"新鲜"窗口；与 meta.warn 对齐 */
+const MEMORY_DEGRADED_FRESH_MS = 5 * 60 * 1000;
+
 /** 默认每场景保留最近 N 条 tick_log；超出 async prune */
 const LOG_RETENTION_DEFAULT = Number(process.env.ENGINE_LOG_RETENTION) || 2000;
 
@@ -46,6 +49,12 @@ export class SceneScheduler {
   private costUsdTotal = 0;
   /** [M4.2.0] 最近 N 条 simulation_meta 软阈值越界告警（滚动窗口） */
   private metaWarns: MetaWarn[] = [];
+  /**
+   * [M4.2.2.b] 最近一次记忆 retrieve 降级时间戳（unix ms）
+   * - runGraph 返回 memory_degraded=true 时刷新
+   * - status().memory_degraded = (now - this <= MEMORY_DEGRADED_FRESH_MS)
+   */
+  private memoryDegradedAt: number | null = null;
   /**
    * [M4.2.0 → M4.2.1.a] 每个 NPC 上一 tick 的真实 token 总消耗（prompt+completion）
    * - 数据来源：runGraph().tokens（M4.2.1.a 起接 chatCompletion.onMetrics 真实值）
@@ -106,6 +115,9 @@ export class SceneScheduler {
   }
 
   status(): EngineStatus {
+    const memoryDegraded =
+      this.memoryDegradedAt != null &&
+      Date.now() - this.memoryDegradedAt <= MEMORY_DEGRADED_FRESH_MS;
     return {
       scene_id: this.scene_id,
       running: this.running,
@@ -118,6 +130,7 @@ export class SceneScheduler {
       cost_usd_total: this.costUsdTotal,
       config: this.cfg,
       meta_warns: this.metaWarns.slice(),
+      memory_degraded: memoryDegraded,
     };
   }
 
@@ -265,6 +278,11 @@ export class SceneScheduler {
         /** [M4.2.1.a] 记录真实 tokens 供下一 tick budget 判定；dry_run 仍为 0 */
         const npcTotalTokens = Number(result.tokens ?? 0);
         this.lastTickTokensByNpc.set(npc.id, npcTotalTokens);
+
+        /** [M4.2.2.b] 聚合 memory 降级标记：任一 NPC 降级即刷新时间戳 */
+        if (result.memory_degraded) {
+          this.memoryDegradedAt = Date.now();
+        }
 
         const metaStr = serializeMeta(result.nextMeta);
         if (metaStr.byteLength > META_HARD_BYTES) {

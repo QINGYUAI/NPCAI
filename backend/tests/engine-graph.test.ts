@@ -14,18 +14,33 @@ const { chatMock } = vi.hoisted(() => ({
 
 vi.mock('../src/utils/llmClient.js', () => ({
   chatCompletion: chatMock,
+  /** [M4.2.2.b] retrieve/store 会依赖 embedText；这里返回固定空向量避免噪音，测试关注 chat 节点行为 */
+  embedText: vi.fn(async () => ({ vector: new Array(1536).fill(0), model: 'text-embedding-3-small', cached: true })),
 }))
 
-/** mock pool.query：ai_config 单行查询 */
+/** mock pool.query/execute：ai_config 单行查询 + store/retrieve 的 MySQL 调用 */
 vi.mock('../src/db/connection.js', () => ({
   pool: {
     query: vi.fn(async (sql: string) => {
       if (sql.includes('FROM ai_config')) {
         return [[{ id: 1, provider: 'openai', api_key: 'sk-fake', base_url: null, model: 'gpt-4o-mini', max_tokens: 800 }], null]
       }
+      /** retrieve 降级查询返回空 */
       return [[], null]
     }),
+    /** store 节点 INSERT npc_memory + UPDATE embed_status 全部走 execute */
+    execute: vi.fn(async () => [{ affectedRows: 1, insertId: 1 }, null]),
   },
+}))
+
+/** [M4.2.2.b] memory-retrieve 在真实测试中由 memory-retrieve.test.ts 覆盖；这里用空实现避免与本测关心的节点耦合 */
+vi.mock('../src/engine/memory/retrieve.js', () => ({
+  retrieveMemories: vi.fn(async () => ({ entries: [], degraded: false })),
+}))
+
+/** [M4.2.2.b] memory-store 同理：写入由 memory-store.test.ts 专门覆盖 */
+vi.mock('../src/engine/memory/store.js', () => ({
+  storeMemory: vi.fn(async () => ({ id: null, embedded: false, status: null })),
 }))
 
 import { runGraph } from '../src/engine/graph/build.js'
