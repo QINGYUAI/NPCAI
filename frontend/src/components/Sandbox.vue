@@ -127,7 +127,8 @@ function resetTimeline() {
 /** 顶栏累计标签展示：$ 保留 4 位；未知（null）降级为 `$?` */
 function fmtSessionCost(v: number | null): string {
   if (v == null) return '$?'
-  if (v < 0.0001 && v > 0) return `$${v.toExponential(2)}`
+  if (v === 0) return '$0.0000'
+  if (v < 0.0001) return `$${v.toExponential(2)}`
   return `$${v.toFixed(4)}`
 }
 /** tokens 简写：≥10k → "1.2k"，否则原值 */
