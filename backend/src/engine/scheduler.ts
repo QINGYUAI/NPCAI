@@ -138,6 +138,17 @@ export class SceneScheduler {
     if (this.metaWarns.length > META_WARN_RING_SIZE) {
       this.metaWarns.splice(0, this.metaWarns.length - META_WARN_RING_SIZE);
     }
+    /** [M4.2.1.b] 同步通过 bus 广播给 WebSocket 订阅者，前端即时闪徽章；不等 3s 轮询 */
+    bus.emitEvent({
+      type: 'meta.warn',
+      scene_id: warn.scene_id,
+      tick: warn.tick,
+      npc_id: warn.npc_id,
+      npc_name: warn.npc_name,
+      bytes: warn.bytes,
+      soft_limit: warn.soft_limit,
+      at: warn.at,
+    });
   }
 
   /** 外部调用：跑一次 tick（供「单步」按钮 / 测试使用） */
@@ -252,13 +263,15 @@ export class SceneScheduler {
         });
         this.costUsdTotal += result.cost_usd || 0;
         /** [M4.2.1.a] 记录真实 tokens 供下一 tick budget 判定；dry_run 仍为 0 */
-        this.lastTickTokensByNpc.set(npc.id, Number(result.tokens ?? 0));
+        const npcTotalTokens = Number(result.tokens ?? 0);
+        this.lastTickTokensByNpc.set(npc.id, npcTotalTokens);
 
         const metaStr = serializeMeta(result.nextMeta);
         if (metaStr.byteLength > META_HARD_BYTES) {
           throw new Error(`simulation_meta 超过硬阈值 ${META_HARD_BYTES} 字节`);
         }
 
+        const npcDuration = Date.now() - npcStart;
         await persistNpcTick({
           scene_id: this.scene_id,
           npc_id: npc.id,
@@ -268,15 +281,25 @@ export class SceneScheduler {
           status: 'success',
           input_summary: result.inputSummary,
           output_meta: metaStr.str,
-          duration_ms: Date.now() - npcStart,
+          duration_ms: npcDuration,
         });
 
+        /** [M4.2.1.b] tick.npc.updated 携带 status / duration / tokens / cost，WS 直推时间线 */
         bus.emitEvent({
           type: 'tick.npc.updated',
           scene_id: this.scene_id,
           tick: tickNo,
           npc_id: npc.id,
+          npc_name: npc.name,
           meta: result.nextMeta,
+          status: 'success',
+          duration_ms: npcDuration,
+          tokens: {
+            prompt: 0,
+            completion: 0,
+            total: npcTotalTokens,
+          },
+          cost_usd: result.cost_usd ?? null,
         });
 
         if (metaStr.byteLength > META_SOFT_BYTES) {
@@ -322,11 +345,13 @@ export class SceneScheduler {
     const duration = Date.now() - t0;
     this.lastDurationMs = duration;
     this.lastTickAt = new Date().toISOString();
+    /** [M4.2.1.b] tick.end 带上 cost_usd_total，前端顶栏可即时累计 */
     bus.emitEvent({
       type: 'tick.end',
       scene_id: this.scene_id,
       tick: tickNo,
       duration_ms: duration,
+      cost_usd_total: this.costUsdTotal,
     });
 
     /** 异步裁剪日志 */

@@ -30,6 +30,11 @@ export interface EngineStatus {
    * - 有任意一条在最近 5 分钟内写入时，REST 响应会带 `X-Meta-Warn: 1`
    */
   meta_warns: MetaWarn[];
+  /**
+   * [M4.2.1.b] WebSocket 订阅地址（相对路径）；未启用 WS 时不返回该字段
+   * 前端据此优先走 WS，不支持则回落 3s 轮询
+   */
+  ws_endpoint?: string;
 }
 
 /** [M4.2.0] simulation_meta 超软阈值告警记录 */
@@ -66,12 +71,44 @@ export interface SimulationMetaV1 {
   debug?: Record<string, unknown>;
 }
 
-/** 事件总线消息 */
+/**
+ * [M4.2.1.b] 事件总线消息（向后兼容扩展）
+ * - `tick.npc.updated` 增补 status / duration_ms / tokens / cost_usd / meta_summary（时间线所需最小集）
+ * - 新增 `meta.warn`：scheduler pushMetaWarn 时同步广播，前端即刻闪烁徽章（不等 3s 轮询）
+ * - `tick.end` 增补 cost_usd_total，用于时间线滚动窗口的顶栏累计
+ */
 export type TickEvent =
   | { type: 'tick.start'; scene_id: number; tick: number; at: string }
-  | { type: 'tick.npc.updated'; scene_id: number; tick: number; npc_id: number; meta: SimulationMetaV1 }
-  | { type: 'tick.end'; scene_id: number; tick: number; duration_ms: number }
-  | { type: 'error'; scene_id: number; tick: number; npc_id?: number; message: string };
+  | {
+      type: 'tick.npc.updated';
+      scene_id: number;
+      tick: number;
+      npc_id: number;
+      npc_name?: string;
+      meta: SimulationMetaV1;
+      status?: 'success' | 'error' | 'skipped';
+      duration_ms?: number;
+      tokens?: { prompt: number; completion: number; total: number };
+      cost_usd?: number | null;
+    }
+  | {
+      type: 'tick.end';
+      scene_id: number;
+      tick: number;
+      duration_ms: number;
+      cost_usd_total?: number;
+    }
+  | { type: 'error'; scene_id: number; tick: number; npc_id?: number; message: string }
+  | {
+      type: 'meta.warn';
+      scene_id: number;
+      tick: number;
+      npc_id: number;
+      npc_name?: string;
+      bytes: number;
+      soft_limit: number;
+      at: string;
+    };
 
 /** 从数据库加载的 NPC 行（推理图节点所需最小集合） */
 export interface NpcRow {

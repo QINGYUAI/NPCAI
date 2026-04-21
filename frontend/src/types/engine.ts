@@ -23,7 +23,66 @@ export interface EngineStatus {
   config: EngineConfig | null
   /** [M4.2.0] 最近 N 条 simulation_meta 软阈值越界记录（滚动窗口） */
   meta_warns?: MetaWarn[]
+  /** [M4.2.1.b] WS 订阅路径；无此字段 = WS 关闭 = 前端回落 3s 轮询 */
+  ws_endpoint?: string
 }
+
+/** [M4.2.1.b] WS 消息（服务端 → 客户端） */
+export interface WsBaseMsg {
+  ts: string
+  type: string
+  scene_id?: number
+  tick?: number
+}
+export interface WsHelloMsg extends WsBaseMsg { type: 'hello'; scene_id: number }
+export interface WsTickStartMsg extends WsBaseMsg { type: 'tick.start'; scene_id: number; tick: number; at: string }
+export interface WsTickNpcUpdatedMsg extends WsBaseMsg {
+  type: 'tick.npc.updated'
+  scene_id: number
+  tick: number
+  npc_id: number
+  npc_name?: string
+  status: 'success' | 'error' | 'skipped'
+  duration_ms?: number
+  tokens?: { prompt: number; completion: number; total: number }
+  cost_usd?: number | null
+  meta_summary?: { latest_say: string | null; latest_action: string | null; emotion: string | null }
+}
+export interface WsTickEndMsg extends WsBaseMsg {
+  type: 'tick.end'
+  scene_id: number
+  tick: number
+  duration_ms: number
+  cost_usd_total?: number
+}
+export interface WsErrorMsg extends WsBaseMsg {
+  type: 'error'
+  scene_id: number
+  tick: number
+  npc_id?: number
+  message: string
+}
+export interface WsMetaWarnMsg extends WsBaseMsg {
+  type: 'meta.warn'
+  scene_id: number
+  tick: number
+  npc_id: number
+  npc_name?: string
+  bytes: number
+  soft_limit: number
+  at: string
+}
+export type WsEngineMsg =
+  | WsHelloMsg
+  | WsTickStartMsg
+  | WsTickNpcUpdatedMsg
+  | WsTickEndMsg
+  | WsErrorMsg
+  | WsMetaWarnMsg
+  | (WsBaseMsg & { type: 'ping' | 'pong' })
+
+/** [M4.2.1.b] WS 客户端连接状态 */
+export type WsConnectionState = 'connecting' | 'open' | 'closed' | 'degraded'
 
 /** [M4.2.0] simulation_meta 软阈值越界告警（滚动窗口条目） */
 export interface MetaWarn {

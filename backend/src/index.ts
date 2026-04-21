@@ -3,6 +3,7 @@
  * 提供 AI 配置、角色 NPC 等服务
  */
 import 'dotenv/config';
+import http from 'node:http';
 import express from 'express';
 import cors from 'cors';
 import { configRouter } from './routes/config.js';
@@ -12,6 +13,7 @@ import { aiLogRouter } from './routes/aiLog.js';
 import { sceneRouter } from './routes/scene.js';
 import { engineRouter } from './routes/engine.js';
 import { initEngine } from './engine/index.js';
+import { mountEngineWs } from './engine/wsServer.js';
 import path from 'path';
 
 const app = express();
@@ -40,6 +42,13 @@ app.get('/api/health', (_, res) => {
   res.json({ status: 'ok', message: 'AI配置服务运行中' });
 });
 
-app.listen(PORT, () => {
+/**
+ * [M4.2.1.b] 改用 http.createServer 以便 ws 同端口挂载（/ws/engine）
+ * 若 OBSERVABILITY_WS_ENABLED=false，mountEngineWs 会跳过挂载，前端自动回落轮询
+ */
+const httpServer = http.createServer(app);
+mountEngineWs(httpServer);
+
+httpServer.listen(PORT, () => {
   console.log(`🚀 服务已启动: http://localhost:${PORT}`);
 });

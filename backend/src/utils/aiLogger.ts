@@ -46,8 +46,8 @@ export function logAiCall(params: AiLogParams): void {
     params.total_tokens != null
       ? params.total_tokens
       : pt != null || ct != null
-      ? (pt ?? 0) + (ct ?? 0)
-      : null;
+        ? (pt ?? 0) + (ct ?? 0)
+        : null;
 
   pool
     .execute(

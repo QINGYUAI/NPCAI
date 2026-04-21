@@ -10,7 +10,14 @@ import type { RowDataPacket } from 'mysql2';
 import { pool } from '../db/connection.js';
 import { createScheduler, getScheduler, removeScheduler } from '../engine/registry.js';
 import { isEngineEnabled } from '../engine/index.js';
+import { isWsEnabled } from '../engine/wsServer.js';
 import type { EngineConfig } from '../engine/types.js';
+
+/** [M4.2.1.b] WS 启用时附加 ws_endpoint；关闭时不返回该字段，前端自动回落轮询 */
+const WS_ENDPOINT = '/ws/engine';
+function withWsEndpoint<T extends object>(data: T): T & { ws_endpoint?: string } {
+  return isWsEnabled() ? { ...data, ws_endpoint: WS_ENDPOINT } : data;
+}
 
 const MIN_INTERVAL = 2000;
 const MAX_INTERVAL = 3600_000;
@@ -99,13 +106,13 @@ export async function startEngine(req: Request, res: Response) {
     let scheduler = getScheduler(scene_id);
     if (scheduler && scheduler.isRunning) {
       attachMetaWarnHeader(res, scheduler);
-      return res.json({ code: 0, data: scheduler.status() });
+      return res.json({ code: 0, data: withWsEndpoint(scheduler.status()) });
     }
 
     scheduler = createScheduler(scene_id, parsed);
     await scheduler.start();
     attachMetaWarnHeader(res, scheduler);
-    return res.json({ code: 0, data: scheduler.status() });
+    return res.json({ code: 0, data: withWsEndpoint(scheduler.status()) });
   } catch (e) {
     console.error('startEngine:', e);
     return err(res, 500, 'INTERNAL', (e as Error).message || '启动失败');
@@ -146,7 +153,7 @@ export async function getEngineStatus(req: Request, res: Response) {
   if (!scheduler) {
     return res.json({
       code: 0,
-      data: {
+      data: withWsEndpoint({
         scene_id,
         running: false,
         tick: 0,
@@ -158,11 +165,11 @@ export async function getEngineStatus(req: Request, res: Response) {
         cost_usd_total: 0,
         config: null,
         meta_warns: [],
-      },
+      }),
     });
   }
   attachMetaWarnHeader(res, scheduler);
-  return res.json({ code: 0, data: scheduler.status() });
+  return res.json({ code: 0, data: withWsEndpoint(scheduler.status()) });
 }
 
 /** GET /api/engine/ticks?scene_id=&after=&limit=&order= */
@@ -221,5 +228,5 @@ export async function stepEngine(req: Request, res: Response) {
   }
   await scheduler.stepOnce();
   attachMetaWarnHeader(res, scheduler);
-  return res.json({ code: 0, data: scheduler.status() });
+  return res.json({ code: 0, data: withWsEndpoint(scheduler.status()) });
 }

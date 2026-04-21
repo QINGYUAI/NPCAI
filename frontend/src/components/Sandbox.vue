@@ -21,8 +21,15 @@ import {
   stopEngine,
   stepEngine,
   getEngineStatus,
+  openEngineWs,
 } from '../api/engine'
-import type { EngineStatus } from '../types/engine'
+import type {
+  EngineStatus,
+  MetaWarn,
+  WsConnectionState,
+  WsMetaWarnMsg,
+  WsTickEndMsg,
+} from '../types/engine'
 import type { Scene, SceneDetail, SceneNpcLink } from '../types/scene'
 import { NPC_CATEGORIES } from '../constants/npc'
 import { resolveAvatarUrl } from '../utils/avatar'
@@ -72,6 +79,15 @@ const engineInterval = ref(5000)
 const engineLoading = ref(false)
 let engineStatusTimer: ReturnType<typeof setInterval> | null = null
 const engineRunning = computed(() => engineStatus.value?.running === true)
+
+/**
+ * [M4.2.1.b] WebSocket 观察者
+ * - 优先使用 /ws/engine 实时推送；断线指数退避重连
+ * - 连续重连失败 → degraded → 自动回落 3s 轮询
+ * - 场景切换 / 组件销毁 / 引擎停止 时统一关闭
+ */
+let wsClose: (() => void) | null = null
+const wsState = ref<WsConnectionState>('closed')
 
 /**
  * [M4.2.0] 最近一次 simulation_meta 越界告警
@@ -282,7 +298,7 @@ async function onEngineStart() {
     })
     if (data.code === 0 && data.data) {
       handleEngineStatusUpdate(data.data)
-      startEngineStatusTimer()
+      startEngineObserver()
       /** 启动后自动打开气泡（用户可随时关） */
       if (!bubbleEnabled.value) bubbleEnabled.value = true
       toast.success(engineDryRun.value ? '引擎已启动（dry_run）' : '引擎已启动')
@@ -305,7 +321,7 @@ async function onEngineStop(force = false) {
     const { data } = await stopEngine(activeSceneId.value, force)
     if (data.code === 0) {
       handleEngineStatusUpdate(data.data || null)
-      stopEngineStatusTimer()
+      stopEngineObserver()
       toast.info(force ? '引擎已强制停止' : '引擎已停止')
     } else {
       toast.error(data.message || '停止失败')
@@ -345,9 +361,9 @@ async function pollEngineStatus() {
     const { data } = await getEngineStatus(activeSceneId.value)
     if (data.code === 0) {
       handleEngineStatusUpdate(data.data || null)
-      /** 后端自停（max_ticks）后，前端同步关定时器 */
+      /** 后端自停（max_ticks）后，前端同步关观察者 */
       if (!engineStatus.value?.running) {
-        stopEngineStatusTimer()
+        stopEngineObserver()
       }
     }
   } catch {
@@ -365,6 +381,82 @@ function stopEngineStatusTimer() {
     clearInterval(engineStatusTimer)
     engineStatusTimer = null
   }
+}
+
+/**
+ * [M4.2.1.b] 根据 status.ws_endpoint 决定走 WS 还是 HTTP 轮询
+ * - 有 ws_endpoint → 尝试 openEngineWs；onConnectionChange('open') 停轮询
+ * - 无 ws_endpoint / degraded → 3s 轮询
+ * - 组件内保证同一时刻只有一种数据源在跑
+ */
+function startEngineObserver() {
+  const endpoint = engineStatus.value?.ws_endpoint
+  const sceneId = activeSceneId.value
+  if (!sceneId) return
+  if (!endpoint) {
+    startEngineStatusTimer()
+    return
+  }
+  stopEngineObserver()
+  wsClose = openEngineWs(endpoint, sceneId, {
+    onConnectionChange: (s) => {
+      wsState.value = s
+      if (s === 'open') {
+        stopEngineStatusTimer()
+      } else if (s === 'degraded') {
+        startEngineStatusTimer()
+      } else if (s === 'closed') {
+        /** 仅短暂 closed → 重连中，不立即启轮询，等 degraded */
+      }
+    },
+    onTickEnd: (msg) => applyWsTickEnd(msg),
+    onMetaWarn: (msg) => applyWsMetaWarn(msg),
+    onError: (msg) => {
+      if (engineStatus.value) {
+        engineStatus.value = {
+          ...engineStatus.value,
+          errors_recent: (engineStatus.value.errors_recent || 0) + 1,
+        }
+      }
+      toast.error(msg.message || '引擎错误')
+    },
+  })
+}
+
+function stopEngineObserver() {
+  if (wsClose) { try { wsClose() } catch { /* noop */ } ; wsClose = null }
+  wsState.value = 'closed'
+  stopEngineStatusTimer()
+}
+
+/** [M4.2.1.b] 用 WS 的 tick.end 帧覆盖关键字段，减少轮询滞后 */
+function applyWsTickEnd(msg: WsTickEndMsg) {
+  if (!engineStatus.value) return
+  engineStatus.value = {
+    ...engineStatus.value,
+    tick: msg.tick,
+    last_tick_at: msg.ts,
+    last_duration_ms: msg.duration_ms,
+    cost_usd_total: msg.cost_usd_total ?? engineStatus.value.cost_usd_total,
+  }
+}
+
+/** [M4.2.1.b] WS 推来的 meta.warn 同步推进本地 meta_warns 数组 + 复用现有 toast 去重 */
+function applyWsMetaWarn(msg: WsMetaWarnMsg) {
+  if (!engineStatus.value) return
+  const next: MetaWarn = {
+    scene_id: msg.scene_id,
+    npc_id: msg.npc_id,
+    npc_name: msg.npc_name,
+    tick: msg.tick,
+    bytes: msg.bytes,
+    soft_limit: msg.soft_limit,
+    at: msg.at,
+  }
+  const list = (engineStatus.value.meta_warns || []).slice()
+  list.push(next)
+  if (list.length > 20) list.splice(0, list.length - 20)
+  handleEngineStatusUpdate({ ...engineStatus.value, meta_warns: list })
 }
 
 /** 画布容器的 CSS 尺寸（视口固定；内部通过相机显示 world） */
@@ -913,15 +1005,15 @@ watch(activeSceneId, (id) => {
   if (id) {
     loadSceneDetail(id)
     /** 切场景时重置引擎面板状态并拉一次最新状态 */
-    stopEngineStatusTimer()
+    stopEngineObserver()
     engineStatus.value = null
     lastShownMetaWarnAt = null
     void pollEngineStatus().then(() => {
-      if (engineStatus.value?.running) startEngineStatusTimer()
+      if (engineStatus.value?.running) startEngineObserver()
     })
   } else {
     destroyGame()
-    stopEngineStatusTimer()
+    stopEngineObserver()
     engineStatus.value = null
     lastShownMetaWarnAt = null
   }
@@ -931,15 +1023,15 @@ onMounted(async () => {
   await loadScenes()
   if (activeSceneId.value) {
     await loadSceneDetail(activeSceneId.value)
-    /** 恢复引擎状态：若后端已在跑，自动挂起状态轮询 */
+    /** 恢复引擎状态：若后端已在跑，自动挂起观察者（WS 优先，降级轮询） */
     await pollEngineStatus()
-    if (engineStatus.value?.running) startEngineStatusTimer()
+    if (engineStatus.value?.running) startEngineObserver()
   }
 })
 
 onBeforeUnmount(() => {
   stopBubbleTimer()
-  stopEngineStatusTimer()
+  stopEngineObserver()
   destroyGame()
 })
 
@@ -1015,6 +1107,20 @@ function categoryLabel(v: string | null | undefined) {
           :content="`NPC#${latestMetaWarn.npc_id} tick#${latestMetaWarn.tick} simulation_meta=${(latestMetaWarn.bytes/1024).toFixed(1)}KB 超软阈值 ${(latestMetaWarn.soft_limit/1024).toFixed(0)}KB，建议精简`">
           <el-tag type="warning" size="small" effect="dark" class="meta-warn-pill">
             ⚠ meta {{ (latestMetaWarn.bytes / 1024).toFixed(1) }}KB
+          </el-tag>
+        </el-tooltip>
+        <!-- [M4.2.1.b] WebSocket 连接状态徽章 -->
+        <el-tooltip v-if="engineRunning && engineStatus?.ws_endpoint" placement="bottom"
+          :content="wsState === 'open' ? 'WebSocket 实时推送中' :
+                    wsState === 'connecting' ? '正在连接 WebSocket…' :
+                    wsState === 'degraded' ? 'WebSocket 连续失败，已降级为 3s 轮询' :
+                    'WebSocket 已断开，重连中…'">
+          <el-tag
+            size="small"
+            :type="wsState === 'open' ? 'success' : wsState === 'degraded' ? 'warning' : 'info'"
+            effect="plain"
+          >
+            {{ wsState === 'open' ? '● WS' : wsState === 'degraded' ? '○ 轮询' : '◐ WS…' }}
           </el-tag>
         </el-tooltip>
       </div>
