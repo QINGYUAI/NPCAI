@@ -276,6 +276,10 @@ function rowToEntry(row: SceneEventRow): EventRingEntry {
     visible_npcs: row.visible_npcs,
     received_at: typeof row.created_at === 'string' ? row.created_at : new Date(row.created_at).toISOString(),
     consumed_tick: row.consumed_tick,
+    /** [M4.3.1.c] 透传对话链与 trace_id 供抽屉/气泡展示 */
+    trace_id: row.trace_id ?? null,
+    parent_event_id: row.parent_event_id ?? null,
+    conv_turn: row.conv_turn ?? null,
   }
 }
 
@@ -291,6 +295,10 @@ function applyWsSceneEvent(msg: WsSceneEventCreatedMsg) {
     visible_npcs: msg.visible_npcs,
     received_at: msg.ts || msg.at,
     consumed_tick: null,
+    /** [M4.3.1.c] 透传 trace / 对话链字段 */
+    trace_id: msg.trace_id ?? null,
+    parent_event_id: msg.parent_event_id ?? null,
+    conv_turn: msg.conv_turn ?? null,
   })
 }
 
@@ -590,6 +598,24 @@ function renderBubble(scene: Phaser.Scene, handle: NodeHandle, text: string) {
   handle.bubble = bubble
 }
 
+/**
+ * [M4.3.1.c] 根据 ring buffer 查某 NPC 最新 dialogue event 的回复对象
+ *   - 约束：只查 actor === npcName 的最新一条 dialogue；取其 parent_event_id 指向的 entry.actor
+ *   - 找不到 / 不是回复 / parent 已出 ring 窗口 → 返回 null（气泡回退到纯 latest_say）
+ */
+function findReplyToActor(npcName: string | null | undefined): string | null {
+  if (!npcName) return null
+  const list = eventEntries.value
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const e = list[i]
+    if (!e || e.type !== 'dialogue' || e.actor !== npcName) continue
+    if (e.parent_event_id == null) return null
+    const parent = list.find((x) => x.key === e.parent_event_id)
+    return parent?.actor ?? null
+  }
+  return null
+}
+
 /** 刷新所有节点气泡（基于最新 detail.npcs 的 simulation_meta） */
 function refreshBubbles() {
   if (!detail.value || !sceneRef.value) return
@@ -597,7 +623,9 @@ function refreshBubbles() {
   for (const n of detail.value.npcs) {
     const h = nodeHandles.value.get(n.npc_id)
     if (!h) continue
-    const text = bubbleEnabled.value ? extractBubbleText(n.simulation_meta) : ''
+    /** [M4.3.1.c] 气泡加「💬 回应 <actor>」后缀：从 ring buffer 回查最新 dialogue 的 parent.actor */
+    const replyTo = bubbleEnabled.value ? findReplyToActor(n.npc_name) : null
+    const text = bubbleEnabled.value ? extractBubbleText(n.simulation_meta, replyTo) : ''
     renderBubble(scene, h, text)
   }
 }

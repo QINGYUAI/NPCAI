@@ -48,11 +48,25 @@ export function snapTo(n: number, step: number) {
   return Math.round(n / step) * step
 }
 
-/** 从 simulation_meta 中提取气泡文本（约定字段，非强制） */
-export function extractBubbleText(meta: Record<string, unknown> | null | undefined): string {
+/**
+ * 从 simulation_meta 中提取气泡文本（约定字段，非强制）
+ *
+ * [M4.3.1.c] 可选 replyTo：若 latest_say 对应的最新 dialogue event 有 parent，
+ *   在气泡正文下方换行追加 `💬 回应 <actor>`。
+ *   - replyTo 为空字符串 / null / undefined 时保持 M3.2 原行为（向后兼容单测）
+ *   - 仅在返回值为 latest_say 原文时追加；`・latest_action` 分支不追加（回复属于"说"，非"动作"）
+ */
+export function extractBubbleText(
+  meta: Record<string, unknown> | null | undefined,
+  replyTo?: string | null,
+): string {
   if (!meta || typeof meta !== 'object') return ''
   const say = (meta as Record<string, unknown>).latest_say
-  if (typeof say === 'string' && say.trim()) return say.trim()
+  if (typeof say === 'string' && say.trim()) {
+    const base = say.trim()
+    if (replyTo && replyTo.trim()) return `${base}\n💬 回应 ${replyTo.trim()}`
+    return base
+  }
   const act = (meta as Record<string, unknown>).latest_action
   if (typeof act === 'string' && act.trim()) return '・' + act.trim()
   return ''

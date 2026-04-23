@@ -21,6 +21,8 @@ export interface TimelineNpcEntry {
   emotion?: string | null
   /** status=error / skipped 时的简要说明 */
   note?: string
+  /** [M4.3.0] tick 级 trace_id；调试抽屉里以 T:<short> 形式展示（默认隐藏） */
+  trace_id?: string | null
 }
 
 export interface TimelineTickRow {

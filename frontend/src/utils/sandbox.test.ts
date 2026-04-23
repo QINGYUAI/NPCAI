@@ -94,4 +94,15 @@ describe('extractBubbleText', () => {
     expect(extractBubbleText({ latest_say: 123 })).toBe('')
     expect(extractBubbleText({ latest_say: '   ' })).toBe('')
   })
+  /** [M4.3.1.c] replyTo 追加"💬 回应 <actor>"一行 */
+  it('replyTo 非空时在 latest_say 下方追加「💬 回应 <actor>」', () => {
+    expect(extractBubbleText({ latest_say: '你好' }, '小美')).toBe('你好\n💬 回应 小美')
+  })
+  it('replyTo 为 null/空串/纯空白 或 latest_say 缺失 时不追加', () => {
+    expect(extractBubbleText({ latest_say: '你好' }, null)).toBe('你好')
+    expect(extractBubbleText({ latest_say: '你好' }, '')).toBe('你好')
+    expect(extractBubbleText({ latest_say: '你好' }, '   ')).toBe('你好')
+    /** latest_action 分支（非 say）不追加回应 */
+    expect(extractBubbleText({ latest_action: '走路' }, '小美')).toBe('・走路')
+  })
 })

@@ -96,6 +96,12 @@ function fmtPayload(p: Record<string, unknown> | null): string {
             :style="{ background: EVENT_TYPE_LABELS[entry.type].color }"
           >{{ EVENT_TYPE_LABELS[entry.type].emoji }} {{ EVENT_TYPE_LABELS[entry.type].label }}</span>
           <span class="evt-actor">{{ entry.actor || 'system' }}</span>
+          <!-- [M4.3.1.c] dialogue 回复链指示：parent_event_id 非空时显示 ↩ 回复 #id / T{turn} -->
+          <span
+            v-if="entry.type === 'dialogue' && entry.parent_event_id != null"
+            class="evt-reply-chip"
+            :title="`回复 #${entry.parent_event_id}${entry.conv_turn != null ? ' · 轮次 ' + entry.conv_turn : ''}`"
+          >↩ 回复 #{{ entry.parent_event_id }}<span v-if="entry.conv_turn != null" class="evt-reply-turn"> ·T{{ entry.conv_turn }}</span></span>
           <span class="evt-time">{{ fmtTime(entry.received_at) }}</span>
           <span class="evt-id">#{{ entry.key }}</span>
         </header>
@@ -208,6 +214,19 @@ function fmtPayload(p: Record<string, unknown> | null): string {
 .evt-badge-some { color: #a5d6ff; border-color: rgba(165, 214, 255, 0.4); background: rgba(165, 214, 255, 0.08); }
 .evt-badge-none { color: var(--ainpc-muted); border-color: var(--ainpc-border); }
 .evt-badge-consumed { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.08); }
+
+/* [M4.3.1.c] dialogue 回复链徽章：浅色，左侧 ↩ */
+.evt-reply-chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: #a5d6ff;
+  border: 1px solid rgba(165, 214, 255, 0.4);
+  background: rgba(165, 214, 255, 0.08);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.evt-reply-turn { color: var(--ainpc-muted); margin-left: 2px; }
 
 .evt-detail-btn {
   margin-left: auto;

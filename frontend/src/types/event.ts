@@ -30,6 +30,12 @@ export interface SceneEventRow {
   created_at: string
   /** 首次被某 NPC 消费的 tick；尚未消费时为 null */
   consumed_tick: number | null
+  /** [M4.3.0] tick 级 trace_id；历史行为 null */
+  trace_id?: string | null
+  /** [M4.3.1.a] 对话链 parent；NULL=会话起点，非 dialogue 恒为 null */
+  parent_event_id?: number | null
+  /** [M4.3.1.a] 对话轮序；起点=1，每回复 +1；非 dialogue 恒为 null */
+  conv_turn?: number | null
 }
 
 /** POST /api/scene/:id/events 的 body 契约（zod schema 在后端） */
@@ -67,6 +73,12 @@ export interface WsSceneEventCreatedMsg {
   payload: Record<string, unknown> | null
   visible_npcs: number[] | null
   at: string
+  /** [M4.3.0] WS 广播时附带 tick 级 trace_id；历史节点为 null */
+  trace_id?: string | null
+  /** [M4.3.1.a] dialogue 回复链 parent */
+  parent_event_id?: number | null
+  /** [M4.3.1.a] 对话轮序 */
+  conv_turn?: number | null
 }
 
 /**
@@ -86,6 +98,12 @@ export interface EventRingEntry {
   received_at: string
   /** 兼容真实事件的 consumed_tick；仅首次查询会有；WS 新增时为 null */
   consumed_tick: number | null
+  /** [M4.3.0] trace_id；展示用，缺失/历史行为 null */
+  trace_id?: string | null
+  /** [M4.3.1.a] 对话链 parent_event_id；非 dialogue / 起点 = null */
+  parent_event_id?: number | null
+  /** [M4.3.1.a] conv_turn；非 dialogue = null */
+  conv_turn?: number | null
 }
 
 /** type → 中文 / emoji / 高亮色；组件层统一用这份映射 */
