@@ -65,7 +65,9 @@ export async function getTraceDetail(req: Request, res: Response) {
         [traceId],
       ),
       safeQuery(
-        `SELECT id, scene_id, type, actor, content, visible_npcs, created_at, consumed_tick
+        /** [M4.3.1.a] 追加 parent_event_id/conv_turn，便于对账 dialogue 链 */
+        `SELECT id, scene_id, type, actor, content, visible_npcs, created_at, consumed_tick,
+                parent_event_id, conv_turn
            FROM scene_event WHERE trace_id = ? ORDER BY id DESC LIMIT 20`,
         [traceId],
       ),
