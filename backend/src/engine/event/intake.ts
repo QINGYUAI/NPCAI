@@ -15,6 +15,7 @@
  * 为什么是纯函数
  * - 单测无需 mock DB；且 scheduler tick 内调用 N 次（每 NPC 一次），复用一份 scene 级事件快照
  */
+import { buildParentMap, isEchoBlocked, type EchoChainNode } from '../dialogue/echo.js';
 import type { EventBlockItem, EventIntakeResult, SceneEventRow } from './types.js';
 
 export interface PickEventsInput {
@@ -33,6 +34,18 @@ export interface PickEventsInput {
    *   - undefined/null 时跳过该过滤（兼容老调用方 / 非 scheduler 入口）
    */
   self_actor_name?: string | null;
+  /**
+   * [M4.3.1.b] 回声保护上限（DialogueConfig.echoMaxTurn）
+   *   - ≤0 / undefined 等价禁用（放行所有，回退 M4.3.1.a 行为）
+   *   - 生效时：dialogue candidate 若构成 (A,B,A,B,…) 交替链且 conv_turn ≥ N+1 即拦
+   */
+  echoMaxTurn?: number;
+  /**
+   * [M4.3.1.b] 可选预构 parent map；不传时 intake 内部基于 allEvents 构一份
+   *   - scheduler 侧多 NPC 并行时可复用一份 map 降低重复开销
+   *   - 单测可直接传裁剪 map 断言
+   */
+  parentMap?: Map<number, EchoChainNode>;
 }
 
 /**
@@ -42,13 +55,40 @@ export interface PickEventsInput {
  * - 丢弃的条数（visible_npcs 不通过 / consumed 命中 / 超 maxPerTick）累加进 dropped_count
  */
 export function pickEventsForNpc(input: PickEventsInput): EventIntakeResult {
-  const { allEvents, npc_id, consumedSet, maxPerTick, self_actor_name } = input;
+  const {
+    allEvents,
+    npc_id,
+    consumedSet,
+    maxPerTick,
+    self_actor_name,
+    echoMaxTurn,
+    parentMap,
+  } = input;
   if (!allEvents || allEvents.length === 0) {
     return { status: 'empty', items: [], consumed_ids: [], dropped_count: 0 };
   }
 
   let dropped = 0;
   const passed: SceneEventRow[] = [];
+
+  /**
+   * [M4.3.1.b] 回声保护：仅当 echoMaxTurn>0 时启用
+   *   - parentMap 未传则现场构建一次（scene 级单次开销，N² NPC 无额外放大）
+   *   - 失败时降级：任何异常都 catch 住，视为"禁用"并 warn（§5.4）
+   */
+  const echoEnabled = typeof echoMaxTurn === 'number' && echoMaxTurn > 0;
+  let echoMap: Map<number, EchoChainNode> | null = null;
+  if (echoEnabled) {
+    try {
+      echoMap = parentMap ?? buildParentMap(allEvents);
+    } catch (e) {
+      console.warn(
+        '[intake.echo] buildParentMap 失败，降级为放行：',
+        (e as Error).message,
+      );
+      echoMap = null;
+    }
+  }
 
   for (const ev of allEvents) {
     /** 1) 可见性过滤：null = 全场景可见；数组需包含当前 npc_id（空数组等价「无人可见」） */
@@ -75,6 +115,33 @@ export function pickEventsForNpc(input: PickEventsInput): EventIntakeResult {
     /** 3) 已消费去重：`${event_id}:${npc_id}` 命中即跳过 */
     if (consumedSet.has(`${ev.id}:${npc_id}`)) {
       dropped += 1;
+      continue;
+    }
+    /**
+     * 4) [M4.3.1.b] 回声保护：沿 parent 链若构成 (A,B,A,B,…) N+1 轮 → 拦
+     *    - 仅 dialogue 走判定；echoMaxTurn ≤0 或 map 构建失败时完全跳过
+     *    - 拦截 dropped++ 并结构化 warn（给运维看）；chain 超 N+1 时告警级别仍为 warn 不升级
+     */
+    if (
+      echoEnabled &&
+      echoMap &&
+      ev.type === 'dialogue' &&
+      isEchoBlocked({
+        candidate: {
+          id: ev.id,
+          type: ev.type,
+          actor: ev.actor,
+          parent_event_id: ev.parent_event_id ?? null,
+          conv_turn: ev.conv_turn ?? null,
+        },
+        byId: echoMap,
+        echoMaxTurn: echoMaxTurn as number,
+      })
+    ) {
+      dropped += 1;
+      console.warn(
+        `[intake.echo] 回声拦截 npc_id=${npc_id} event_id=${ev.id} actor=${ev.actor ?? '<null>'} conv_turn=${ev.conv_turn ?? '<null>'} cap=${echoMaxTurn}`,
+      );
       continue;
     }
     passed.push(ev);

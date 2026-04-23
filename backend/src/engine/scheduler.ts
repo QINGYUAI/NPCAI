@@ -17,6 +17,8 @@ import {
 import { pickEventsForNpc } from './event/intake.js';
 import { buildEventBlock } from './event/prompts.js';
 import type { SceneEventRow } from './event/types.js';
+import { buildParentMap, type EchoChainNode } from './dialogue/echo.js';
+import { getDialogueConfig } from './dialogue/config.js';
 import { runGraph } from './graph/build.js';
 import { generateTraceId } from './trace.js';
 import type {
@@ -284,6 +286,26 @@ export class SceneScheduler {
       }
     }
 
+    /**
+     * [M4.3.1.b] 回声保护：scene 级预构 parent map，多 NPC 复用
+     *   - 仅在 sceneEvents 非空 + dialogue 启用时构建；失败降级放行
+     *   - echoMaxTurn ≤0 时视为禁用（intake 侧双保险）
+     */
+    const dialogueCfg = getDialogueConfig();
+    const echoMaxTurn = dialogueCfg.enabled ? dialogueCfg.echoMaxTurn : 0;
+    let echoParentMap: Map<number, EchoChainNode> | undefined;
+    if (echoMaxTurn > 0 && sceneEvents.length > 0) {
+      try {
+        echoParentMap = buildParentMap(sceneEvents);
+      } catch (e) {
+        console.warn(
+          `[engine.echo] scene=${this.scene_id} tick=${tickNo} parent map 构建失败降级放行：`,
+          (e as Error).message,
+        );
+        echoParentMap = undefined;
+      }
+    }
+
     /** 并发池：Promise.all + 分片 */
     await runWithPool(npcs, this.cfg.concurrency, async (npc) => {
       if (signal.aborted) return;
@@ -332,6 +354,9 @@ export class SceneScheduler {
         maxPerTick: eventCfg.maxPerTick,
         /** [M4.3.1.a V2=b] 自播 dialogue 过滤：A 不消费自己 t-1 的 dialogue event，避免自言自语循环 */
         self_actor_name: npc.name,
+        /** [M4.3.1.b] 回声保护：0 等价禁用；parentMap scene 级复用 */
+        echoMaxTurn,
+        parentMap: echoParentMap,
       });
       const eventBlock = buildEventBlock(intake.items);
 
