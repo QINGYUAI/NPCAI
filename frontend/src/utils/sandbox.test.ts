@@ -105,4 +105,31 @@ describe('extractBubbleText', () => {
     /** latest_action 分支（非 say）不追加回应 */
     expect(extractBubbleText({ latest_action: '走路' }, '小美')).toBe('・走路')
   })
+
+  /** [M4.4.1.b] scheduledActivity 闲时回退（仅在无 say/action 时生效） */
+  it('无 say/action 且有 scheduledActivity：显示「📅 当前日程: <activity> @ <location>」', () => {
+    expect(
+      extractBubbleText({}, null, { activity: '工作', location: '书房' }),
+    ).toBe('📅 当前日程: 工作 @ 书房')
+    expect(
+      extractBubbleText({}, null, { activity: '散步', location: null }),
+    ).toBe('📅 当前日程: 散步')
+  })
+
+  it('有 latest_say 时忽略 scheduledActivity（say 优先级最高）', () => {
+    expect(
+      extractBubbleText({ latest_say: '你好' }, null, { activity: '工作', location: '书房' }),
+    ).toBe('你好')
+    /** say + replyTo + schedule 三者同时存在时仍不显示日程行 */
+    expect(
+      extractBubbleText({ latest_say: '你好' }, '小美', { activity: '工作', location: '书房' }),
+    ).toBe('你好\n💬 回应 小美')
+  })
+
+  it('scheduledActivity 为 null/空对象/activity 空白 → 不回退', () => {
+    expect(extractBubbleText({}, null, null)).toBe('')
+    expect(extractBubbleText({}, null, undefined)).toBe('')
+    expect(extractBubbleText({}, null, { activity: '', location: '书房' })).toBe('')
+    expect(extractBubbleText({}, null, { activity: '   ', location: null })).toBe('')
+  })
 })

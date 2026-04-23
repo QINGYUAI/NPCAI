@@ -53,12 +53,22 @@ export function snapTo(n: number, step: number) {
  *
  * [M4.3.1.c] 可选 replyTo：若 latest_say 对应的最新 dialogue event 有 parent，
  *   在气泡正文下方换行追加 `💬 回应 <actor>`。
- *   - replyTo 为空字符串 / null / undefined 时保持 M3.2 原行为（向后兼容单测）
- *   - 仅在返回值为 latest_say 原文时追加；`・latest_action` 分支不追加（回复属于"说"，非"动作"）
+ *
+ * [M4.4.1.b] 可选 scheduledActivity：当既无 latest_say 也无 latest_action 时，
+ *   若存在日程模板则展示 `📅 当前日程: <activity>[ @ <location>]`。
+ *   - say 优先级最高，完全覆盖日程（对话态度更活跃）
+ *   - action 次之；schedule 仅做"闲时回退"，避免 NPC 画面空白
+ *   - 入参可以是后端 SimulationMetaV1.scheduled_activity 对象或直接透传 null/undefined
  */
+export type BubbleSchedule = {
+  activity?: string | null
+  location?: string | null
+} | null | undefined
+
 export function extractBubbleText(
   meta: Record<string, unknown> | null | undefined,
   replyTo?: string | null,
+  scheduledActivity?: BubbleSchedule,
 ): string {
   if (!meta || typeof meta !== 'object') return ''
   const say = (meta as Record<string, unknown>).latest_say
@@ -69,5 +79,14 @@ export function extractBubbleText(
   }
   const act = (meta as Record<string, unknown>).latest_action
   if (typeof act === 'string' && act.trim()) return '・' + act.trim()
+
+  /** [M4.4.1.b] 闲时回退：显示当前小时的日程活动 */
+  if (scheduledActivity && typeof scheduledActivity === 'object') {
+    const activity = typeof scheduledActivity.activity === 'string' ? scheduledActivity.activity.trim() : ''
+    if (activity) {
+      const loc = typeof scheduledActivity.location === 'string' ? scheduledActivity.location.trim() : ''
+      return loc ? `📅 当前日程: ${activity} @ ${loc}` : `📅 当前日程: ${activity}`
+    }
+  }
   return ''
 }

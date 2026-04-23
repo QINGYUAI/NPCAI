@@ -625,7 +625,14 @@ function refreshBubbles() {
     if (!h) continue
     /** [M4.3.1.c] 气泡加「💬 回应 <actor>」后缀：从 ring buffer 回查最新 dialogue 的 parent.actor */
     const replyTo = bubbleEnabled.value ? findReplyToActor(n.npc_name) : null
-    const text = bubbleEnabled.value ? extractBubbleText(n.simulation_meta, replyTo) : ''
+    /** [M4.4.1.b] 闲时回退：无 say/action 时展示当前小时日程；scheduled_activity 由后端 runGraph 写入 simulation_meta */
+    const sched =
+      bubbleEnabled.value && n.simulation_meta
+        ? (n.simulation_meta as Record<string, unknown>).scheduled_activity ?? null
+        : null
+    const text = bubbleEnabled.value
+      ? extractBubbleText(n.simulation_meta, replyTo, sched as Parameters<typeof extractBubbleText>[2])
+      : ''
     renderBubble(scene, h, text)
   }
 }

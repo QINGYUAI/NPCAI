@@ -182,7 +182,16 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
   });
   const memoryBlock = buildMemoryBlock(retrieveResult.entries);
 
-  /** plan 节点；[M4.2.4.b] 注入 eventBlock（若有） */
+  /**
+   * plan 节点；[M4.2.4.b] 注入 eventBlock（若有）
+   * [M4.4.1.b Q4=a] 日程前置分支：仅当"本 tick 无事件 + scheduledActivity 非空"时传入日程
+   *   - 有事件 → 事件驱动 prompt，忽略日程（避免 hint 干扰）
+   *   - 无事件 + 无日程 → 退化为 M4.4.0 行为
+   *   - 无事件 + 有日程 → 新增【当前时段计划】system 行
+   */
+  const hasEvents = Array.isArray(input.eventItems) && input.eventItems.length > 0;
+  const planScheduledActivity =
+    !hasEvents && input.scheduledActivity ? input.scheduledActivity : null;
   const planPrompt = buildPlanPrompt({
     scene: input.scene,
     npc,
@@ -191,6 +200,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     tick,
     memoryBlock,
     eventBlock: input.eventBlock,
+    scheduledActivity: planScheduledActivity,
   });
   const planResult = await callWithRetry(
     aiCfg,
@@ -334,6 +344,11 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     emotion: speakResult.emotion,
     plan: plan.slice(0, 3),
     memory_summary: memorySummary,
+    /**
+     * [M4.4.1.b] 始终写入 scheduled_activity（即便走事件分支也留档），
+     * 前端气泡按 say>action>schedule 优先级自行决定是否展示
+     */
+    scheduled_activity: input.scheduledActivity ?? null,
     debug: {
       live: true,
       tick,
@@ -373,6 +388,8 @@ function runDryRun(input: GraphInput, inputSummary: string): GraphOutput {
     emotion: emotion ?? null,
     plan: prevMeta?.plan && prevMeta.plan.length ? prevMeta.plan.slice(0, 3) : [`继续 tick ${tick}`],
     memory_summary: prevMeta?.memory_summary ?? `dry_run ${npc.name} 初始记忆`,
+    /** [M4.4.1.b] dry_run 也透传日程，方便 SIM_CLOCK_HOUR 演示前端气泡 */
+    scheduled_activity: input.scheduledActivity ?? null,
     debug: { dry_run: true, tick, cost_usd: 0 },
   };
   return { nextMeta, inputSummary, cost_usd: 0 };

@@ -59,15 +59,38 @@ export function buildPlanPrompt(params: {
    * - 空字符串 / undefined 均等效于不注入
    */
   eventBlock?: string;
+  /**
+   * [M4.4.1.b] 当前小时的日程条目（由 scheduler 预解析注入）
+   * - 非空时在 system 结尾加「【当前时段计划】<activity> at <location>」一行
+   * - 调用方（runGraph）按 Q4=a 语义：仅在"无事件"分支才传入非 null
+   * - location=null 时仅显示 activity；priority 仅 UI 用，prompt 不展示
+   */
+  scheduledActivity?: {
+    activity: string;
+    location: string | null;
+    priority: number;
+  } | null;
 }): { system: string; user: string } {
-  const { scene, npc, neighbors, prevSummary, tick, memoryBlock, eventBlock } = params;
+  const { scene, npc, neighbors, prevSummary, tick, memoryBlock, eventBlock, scheduledActivity } =
+    params;
+
+  /**
+   * 日程提示行：仅在 scheduledActivity 有效时拼，放在 system 末尾
+   *   - 前端气泡对齐：`📅 当前日程: <activity>`；LLM 侧用更中性"当前时段计划"措辞
+   */
+  let scheduleLine = '';
+  if (scheduledActivity && scheduledActivity.activity) {
+    const loc = scheduledActivity.location ? ` at ${scheduledActivity.location}` : '';
+    scheduleLine = `\n\n【当前时段计划】${scheduledActivity.activity}${loc}（请据此展开当前 tick 的 1-3 步计划）`;
+  }
+
   const system = `${SYSTEM_PREFIX}
 【角色设定】
 ${npc.system_prompt || `你的名字是「${npc.name}」。`}
 
 【性格】${npc.personality || '未特别指定'}
 
-【当前任务】为下一小段时间（1-3 步）做一个轻量计划。`;
+【当前任务】为下一小段时间（1-3 步）做一个轻量计划。${scheduleLine}`;
 
   const user = `${eventBlock || ''}【场景】${scene.name}${scene.description ? `（${scene.description}）` : ''}
 【同场景角色】${neighbors.map((n) => n.name).join('、') || '无'}

@@ -76,6 +76,17 @@ export interface SimulationMetaV1 {
   memory_summary?: string | null;
   relations?: Record<string, string>;
   debug?: Record<string, unknown>;
+  /**
+   * [M4.4.1.b] 当前小时的日程条目（由 scheduler 预解析 + runGraph 原样写入）
+   *   - SCHEDULE_ENABLED=false 或无覆盖模板 → null
+   *   - 前端气泡在无 latest_say/latest_action 时回退展示 `📅 当前日程: <activity>`
+   *   - 与 plan 节点的 prompt 分支解耦：prompt 仅在"无事件"分支注入，meta 始终写入便于 UI
+   */
+  scheduled_activity?: {
+    activity: string;
+    location: string | null;
+    priority: number;
+  } | null;
 }
 
 /**
