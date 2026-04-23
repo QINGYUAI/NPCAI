@@ -21,6 +21,9 @@ import { buildParentMap, type EchoChainNode } from './dialogue/echo.js';
 import { getDialogueConfig } from './dialogue/config.js';
 import { runGraph } from './graph/build.js';
 import { generateTraceId } from './trace.js';
+import { getScheduleConfig } from './schedule/config.js';
+import { fetchScheduleForNpc } from './schedule/fetch.js';
+import { resolveScheduledActivity } from './schedule/resolve.js';
 import type {
   EngineConfig,
   EngineStatus,
@@ -299,6 +302,18 @@ export class SceneScheduler {
      */
     const dialogueCfg = getDialogueConfig();
     const echoMaxTurn = dialogueCfg.enabled ? dialogueCfg.echoMaxTurn : 0;
+
+    /**
+     * [M4.4.1.a] NPC 日程：tick 顶部取一次 current_hour，后续 per-NPC loop 逐个 fetch
+     *   - SCHEDULE_ENABLED=false 直接跳过 fetch，scheduledActivity=null 等价 M4.4.0 行为
+     *   - SIM_CLOCK_HOUR 可注入用于单测 / 演示（整数 0..23；无效值忽略回退系统 hour）
+     *   - N=2 NPC 每 tick 2 次单行查；N 大时可后续批量化，.a 批次保持最小改动
+     */
+    const scheduleCfg = getScheduleConfig();
+    const simHourEnv = process.env.SIM_CLOCK_HOUR;
+    const simHour = simHourEnv != null ? Number.parseInt(simHourEnv, 10) : NaN;
+    const currentHour =
+      Number.isInteger(simHour) && simHour >= 0 && simHour <= 23 ? simHour : new Date().getHours();
     let echoParentMap: Map<number, EchoChainNode> | undefined;
     if (echoMaxTurn > 0 && sceneEvents.length > 0) {
       try {
@@ -369,6 +384,17 @@ export class SceneScheduler {
       });
       const eventBlock = buildEventBlock(intake.items);
 
+      /**
+       * [M4.4.1.a] 为本 NPC 预取当前 hour 的日程条目（disable 时跳过）
+       *   - 失败不阻主链路：fetch 内部吞错返回 null
+       *   - resolve 再做一次兜底（priority/location 默认值）
+       */
+      let scheduledActivity: { activity: string; location: string | null; priority: number } | null = null;
+      if (scheduleCfg.enabled) {
+        const row = await fetchScheduleForNpc(npc.id, currentHour);
+        scheduledActivity = row ? resolveScheduledActivity([row], currentHour) : null;
+      }
+
       try {
         const result = await runGraph({
           scene,
@@ -381,6 +407,8 @@ export class SceneScheduler {
           /** [M4.3.1.a] 同源结构化 items，graph 内 emitDialogueFromSay 用于就地筛 parent */
           eventItems: intake.items,
           traceId,
+          /** [M4.4.1.a] 当前 hour 的日程条目；.a 批次仅透传，.b 批次 plan 前置分支消费 */
+          scheduledActivity,
         });
         this.costUsdTotal += result.cost_usd || 0;
         /** [M4.2.1.a] 记录真实 tokens 供下一 tick budget 判定；dry_run 仍为 0 */

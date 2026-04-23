@@ -55,6 +55,17 @@ export interface GraphInput {
    *   - TRACE_ID_ENABLED=false 时为 null，全链路写 NULL，保持 M4.2 行为
    */
   traceId?: string | null;
+  /**
+   * [M4.4.1.a] 当前 NPC 在当前 hour 的日程条目（由 scheduler 预解析注入）
+   *   - 本 .a 批次仅透传到 persist 层 / simulation_meta，不改 plan prompt
+   *   - M4.4.1.b 将按 Q4=a 在 plan 节点做"无事件→日程驱动"前置分支消费
+   *   - null / undefined = 该小时无日程模板 or SCHEDULE_ENABLED=false
+   */
+  scheduledActivity?: {
+    activity: string;
+    location: string | null;
+    priority: number;
+  } | null;
 }
 
 export interface GraphOutput {
