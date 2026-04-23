@@ -34,6 +34,12 @@ export interface StoreInput {
   aiCfg: { id?: number; api_key: string; base_url: string | null; provider: string };
   signal?: AbortSignal;
   onMetrics?: (m: { total_tokens: number; cost_usd: number | null }) => void;
+  /**
+   * [M4.3.0] tick 级 trace_id；写入 npc_memory.trace_id 列 + 透传到 embedText 的 ai_call_log
+   *   - scheduler 生成 → runGraph → storeMemory 的链路自动贯穿
+   *   - 手动调用 storeMemory（测试 / 未来 M4.3.1）可传自定义 uuid 或 null
+   */
+  traceId?: string | null;
 }
 
 const MIN_CONTENT_LEN = 5;
@@ -78,12 +84,13 @@ export async function storeMemory(input: StoreInput): Promise<StoreResult> {
 
   /** Step 1：MySQL INSERT with embed_status='pending'，拿到 id */
   let rowId: number;
+  const traceId = input.traceId ?? null;
   try {
     const [res] = await pool.execute<ResultSetHeader>(
       `INSERT INTO npc_memory
-         (npc_id, scene_id, tick, type, content, importance, embed_status, embed_model)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL)`,
-      [input.npc.id, input.scene.id, input.tick, input.type, content, importance],
+         (npc_id, scene_id, tick, type, content, importance, embed_status, embed_model, trace_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?)`,
+      [input.npc.id, input.scene.id, input.tick, input.type, content, importance, traceId],
     );
     rowId = Number(res.insertId);
     if (!rowId) throw new Error('INSERT 返回 insertId=0');
@@ -111,6 +118,7 @@ export async function storeMemory(input: StoreInput): Promise<StoreResult> {
       memory_id: rowId,
       type: input.type,
     },
+    trace_id: traceId,
   };
 
   /** Step 2：embed content → 向量 */

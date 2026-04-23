@@ -63,6 +63,10 @@ export function getSubscriberCount(scene_id: number): number {
 /**
  * [M4.2.1.b] 把 bus 事件序列化为 WS 下行消息，附服务端时间戳
  * - meta 字段做 summary：只保留 latest_say / latest_action / emotion 以控在 <4KB
+ *
+ * [M4.3.0] 所有事件都把 trace_id（可能为 null）带到前端
+ *   - tick.npc.updated 分支：meta 被 summary 后丢了 trace 场景，故显式挑一下字段再带
+ *   - 其他分支走默认 `{ ts, ...ev }`，因 TickEvent 已把 trace_id 放进事件本身
  */
 function serializeEvent(ev: TickEvent): string {
   const ts = new Date().toISOString();
@@ -79,6 +83,7 @@ function serializeEvent(ev: TickEvent): string {
       duration_ms: ev.duration_ms,
       tokens: ev.tokens,
       cost_usd: ev.cost_usd,
+      trace_id: ev.trace_id ?? null,
       meta_summary: {
         latest_say: m?.latest_say ?? null,
         latest_action: m?.latest_action ?? null,

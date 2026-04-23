@@ -20,6 +20,7 @@ import { bus } from '../engine/bus.js';
 import { isEngineEnabled } from '../engine/index.js';
 import { reflectIfTriggered } from '../engine/reflection/reflect.js';
 import { getScheduler } from '../engine/registry.js';
+import { generateTraceId } from '../engine/trace.js';
 import type { NpcRow, SceneRow, SimulationMetaV1 } from '../engine/types.js';
 
 function err(res: Response, http: number, code: string, message: string) {
@@ -122,6 +123,14 @@ export async function reflectOnce(req: Request, res: Response) {
     const prevMeta = parseMeta(npc.simulation_meta);
     const prevSummary = prevMeta?.memory_summary ?? '';
 
+    /**
+     * [M4.3.0] 手动反思也生成一条 trace_id：
+     *   - 与 scheduler 驱动的反思走同一套链路（npc_reflection / ai_call_log / 反哺 npc_memory 都带 trace）
+     *   - 便于 `/api/engine/trace/:id` 回查「这次手工点击引起了哪些落库」
+     *   - TRACE_ID_ENABLED=false 时为 null，保持 M4.2 行为
+     */
+    const traceId = generateTraceId();
+
     /** 5) 触发反思（force=true 跳周期判定） */
     const result = await reflectIfTriggered({
       scene,
@@ -131,6 +140,7 @@ export async function reflectOnce(req: Request, res: Response) {
       aiCfg,
       dryRun: false,
       force: true,
+      traceId,
     });
 
     /** 6) 与周期触发保持一致的 WS 广播：仅 generated 时 emit */
@@ -145,6 +155,7 @@ export async function reflectOnce(req: Request, res: Response) {
         reflection_ids: result.reflection_ids,
         source_memory_ids: result.source_memory_ids,
         at: new Date().toISOString(),
+        trace_id: traceId,
       });
     }
 
@@ -159,6 +170,7 @@ export async function reflectOnce(req: Request, res: Response) {
         items: result.items,
         reflection_ids: result.reflection_ids,
         source_memory_ids: result.source_memory_ids,
+        trace_id: traceId,
       },
     });
   } catch (e) {

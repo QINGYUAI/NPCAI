@@ -39,6 +39,13 @@ export interface GraphInput {
    * - 最终注入到 buildPlanPrompt 的 user 消息最前（event > scene > neighbor > memory > tick）
    */
   eventBlock?: string;
+  /**
+   * [M4.3.0] tick 级 trace_id（uuid v4）
+   *   - scheduler 在 tick 顶部生成一次，贯穿本函数所有子调用（retrieve / store / reflect / callWithRetry）
+   *   - 最终落到 5 张表（ai_call_log / npc_tick_log / scene_event / npc_memory / npc_reflection）
+   *   - TRACE_ID_ENABLED=false 时为 null，全链路写 NULL，保持 M4.2 行为
+   */
+  traceId?: string | null;
 }
 
 export interface GraphOutput {
@@ -99,6 +106,8 @@ const DRY_EMOTIONS: Array<(typeof EMOTIONS)[number]> = ['neutral', 'curious', 'h
 
 export async function runGraph(input: GraphInput): Promise<GraphOutput> {
   const { npc, neighbors, tick, dryRun, signal } = input;
+  /** [M4.3.0] 统一取 traceId，null 代表 TRACE_ID_ENABLED=false 或非 scheduler 入口 */
+  const traceId = input.traceId ?? null;
   if (signal?.aborted) throw new Error('aborted');
 
   const inputSummary = [
@@ -149,6 +158,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     },
     signal,
     onMetrics,
+    traceId,
   });
   const memoryBlock = buildMemoryBlock(retrieveResult.entries);
 
@@ -167,7 +177,12 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     planPrompt.system,
     planPrompt.user,
     planSchema,
-    { source: 'engine.plan', ai_config_id: npc.ai_config_id, context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'plan' } },
+    {
+      source: 'engine.plan',
+      ai_config_id: npc.ai_config_id,
+      context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'plan' },
+      trace_id: traceId,
+    },
     signal,
     onMetrics,
   );
@@ -180,7 +195,12 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     speakPrompt.system,
     speakPrompt.user,
     speakSchema,
-    { source: 'engine.speak', ai_config_id: npc.ai_config_id, context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'speak' } },
+    {
+      source: 'engine.speak',
+      ai_config_id: npc.ai_config_id,
+      context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'speak' },
+      trace_id: traceId,
+    },
     signal,
     onMetrics,
   );
@@ -205,6 +225,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
       aiCfg: { id: aiCfg.id, api_key: aiCfg.api_key, base_url: aiCfg.base_url, provider: aiCfg.provider },
       signal,
       onMetrics,
+      traceId,
     });
   }
   if (speakResult.latest_say) {
@@ -217,6 +238,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
       aiCfg: { id: aiCfg.id, api_key: aiCfg.api_key, base_url: aiCfg.base_url, provider: aiCfg.provider },
       signal,
       onMetrics,
+      traceId,
     });
   }
 
@@ -234,7 +256,12 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
       memPrompt.system,
       memPrompt.user,
       memorySchema,
-      { source: 'engine.memory', ai_config_id: npc.ai_config_id, context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'memory' } },
+      {
+        source: 'engine.memory',
+        ai_config_id: npc.ai_config_id,
+        context: { scene_id: input.scene.id, npc_id: npc.id, tick, node: 'memory' },
+        trace_id: traceId,
+      },
       signal,
       onMetrics,
     );
@@ -257,6 +284,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     dryRun: false,
     signal,
     onMetrics,
+    traceId,
   });
 
   const nextMeta: SimulationMetaV1 = {
@@ -317,7 +345,13 @@ async function callWithRetry<T>(
   system: string,
   user: string,
   schema: z.ZodSchema<T>,
-  logCtx: { source: string; ai_config_id?: number; context?: Record<string, unknown> },
+  logCtx: {
+    source: string;
+    ai_config_id?: number;
+    context?: Record<string, unknown>;
+    /** [M4.3.0] tick 级 trace_id；由 runGraph 透传，写入 ai_call_log.trace_id */
+    trace_id?: string | null;
+  },
   signal?: AbortSignal,
   /** [M4.2.1.a] 无论 JSON 校验是否成功，只要 provider 真实返回 200 就累加 tokens/cost */
   onMetrics?: (m: { total_tokens: number; cost_usd: number | null }) => void,
@@ -343,6 +377,7 @@ async function callWithRetry<T>(
             source: logCtx.source,
             ai_config_id: logCtx.ai_config_id,
             context: { ...(logCtx.context || {}), attempt },
+            trace_id: logCtx.trace_id ?? null,
           },
           onMetrics,
         },

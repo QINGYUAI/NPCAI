@@ -61,6 +61,13 @@ export interface ReflectInput {
   force?: boolean;
   signal?: AbortSignal;
   onMetrics?: (m: { total_tokens: number; cost_usd: number | null }) => void;
+  /**
+   * [M4.3.0] tick 级 trace_id；用于：
+   *   · INSERT npc_reflection.trace_id（3 条反思共享同一 id）
+   *   · 反哺 storeMemory 时透传（让反思衍生的 npc_memory 也带 trace_id）
+   *   · chatCompletion 的 LogContext → ai_call_log.trace_id
+   */
+  traceId?: string | null;
 }
 
 const SKIPPED: ReflectionResult = {
@@ -124,6 +131,7 @@ export async function reflectIfTriggered(input: ReflectInput): Promise<Reflectio
       tick: input.tick,
       items,
       sourceMemoryIds: source_memory_ids,
+      traceId: input.traceId ?? null,
     });
   } catch (e) {
     console.warn(`[reflection] INSERT 失败：${(e as Error).message}`);
@@ -155,6 +163,7 @@ export async function reflectIfTriggered(input: ReflectInput): Promise<Reflectio
         },
         signal: input.signal,
         onMetrics: input.onMetrics,
+        traceId: input.traceId ?? null,
       });
       if (store.id) {
         await pool
@@ -224,6 +233,7 @@ async function generateReflection(
               node: 'reflection',
               attempt,
             },
+            trace_id: input.traceId ?? null,
           },
           onMetrics: input.onMetrics,
         },
@@ -254,18 +264,20 @@ async function insertReflections(args: {
   tick: number;
   items: ReflectionItem[];
   sourceMemoryIds: number[];
+  /** [M4.3.0] 3 条反思共享本 tick 的 trace_id（nullable 兼容 TRACE_ID_ENABLED=false） */
+  traceId?: string | null;
 }): Promise<number[]> {
-  const { npcId, sceneId, tick, items, sourceMemoryIds } = args;
+  const { npcId, sceneId, tick, items, sourceMemoryIds, traceId } = args;
   if (items.length === 0) return [];
-  const placeholders = items.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
-  const params: Array<number | string> = [];
+  const placeholders = items.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ');
+  const params: Array<number | string | null> = [];
   const sourceJson = JSON.stringify(sourceMemoryIds);
   for (const it of items) {
-    params.push(npcId, sceneId, tick, it.theme, it.content, sourceJson);
+    params.push(npcId, sceneId, tick, it.theme, it.content, sourceJson, traceId ?? null);
   }
   const [res] = await pool.execute<ResultSetHeader>(
     `INSERT INTO npc_reflection
-       (npc_id, scene_id, tick, theme, content, source_memory_ids)
+       (npc_id, scene_id, tick, theme, content, source_memory_ids, trace_id)
      VALUES ${placeholders}`,
     params,
   );

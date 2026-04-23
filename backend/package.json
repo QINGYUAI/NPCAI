@@ -17,6 +17,7 @@
     "db:migrate:m422": "tsx src/db/migrate-m422.ts",
     "db:migrate:m423": "tsx src/db/migrate-m423.ts",
     "db:migrate:m424": "tsx src/db/migrate-m424.ts",
+    "db:migrate:m43": "tsx src/db/migrate-m43.ts",
     "qdrant:init": "tsx scripts/qdrant-init.ts",
     "smoke:engine": "tsx scripts/smoke-engine.ts",
     "test": "vitest run",

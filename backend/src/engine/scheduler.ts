@@ -18,6 +18,7 @@ import { pickEventsForNpc } from './event/intake.js';
 import { buildEventBlock } from './event/prompts.js';
 import type { SceneEventRow } from './event/types.js';
 import { runGraph } from './graph/build.js';
+import { generateTraceId } from './trace.js';
 import type {
   EngineConfig,
   EngineStatus,
@@ -155,7 +156,7 @@ export class SceneScheduler {
     return false;
   }
 
-  private pushMetaWarn(warn: MetaWarn): void {
+  private pushMetaWarn(warn: MetaWarn, traceId: string | null): void {
     this.metaWarns.push(warn);
     if (this.metaWarns.length > META_WARN_RING_SIZE) {
       this.metaWarns.splice(0, this.metaWarns.length - META_WARN_RING_SIZE);
@@ -170,6 +171,7 @@ export class SceneScheduler {
       bytes: warn.bytes,
       soft_limit: warn.soft_limit,
       at: warn.at,
+      trace_id: traceId,
     });
   }
 
@@ -200,11 +202,18 @@ export class SceneScheduler {
     const tickNo = this.tickNo;
     const t0 = Date.now();
     const startedAt = new Date();
+    /**
+     * [M4.3.0] tick 粒度 trace_id：本 tick 内所有 DB 写入（5 张表）+ WS 事件 + 日志都串同一 id
+     * - TRACE_ID_ENABLED=false 时返回 null，所有字段写 NULL（一键回滚到 M4.2 行为）
+     * - 通过函数参数显式贯穿，不用全局 AsyncLocalStorage，更易单测 & 排错
+     */
+    const traceId = generateTraceId();
     bus.emitEvent({
       type: 'tick.start',
       scene_id: this.scene_id,
       tick: tickNo,
       at: startedAt.toISOString(),
+      trace_id: traceId,
     });
 
     this.abortController = new AbortController();
@@ -221,6 +230,7 @@ export class SceneScheduler {
         scene_id: this.scene_id,
         tick: tickNo,
         message: `load: ${(e as Error).message}`,
+        trace_id: traceId,
       });
       return;
     }
@@ -295,6 +305,7 @@ export class SceneScheduler {
           output_meta: null,
           duration_ms: Date.now() - npcStart,
           error_message: msg,
+          trace_id: traceId,
         }).catch((e) => console.warn('[engine] 记录 skipped 日志失败:', e));
         bus.emitEvent({
           type: 'error',
@@ -302,6 +313,7 @@ export class SceneScheduler {
           tick: tickNo,
           npc_id: npc.id,
           message: msg,
+          trace_id: traceId,
         });
         /** 预算 skip 不消耗本 tick tokens，清零使下一 tick 继续尝试 */
         this.lastTickTokensByNpc.set(npc.id, 0);
@@ -330,6 +342,7 @@ export class SceneScheduler {
           dryRun: this.cfg.dry_run,
           signal,
           eventBlock,
+          traceId,
         });
         this.costUsdTotal += result.cost_usd || 0;
         /** [M4.2.1.a] 记录真实 tokens 供下一 tick budget 判定；dry_run 仍为 0 */
@@ -357,6 +370,7 @@ export class SceneScheduler {
             reflection_ids: result.reflection.reflection_ids,
             source_memory_ids: result.reflection.source_memory_ids,
             at: new Date().toISOString(),
+            trace_id: traceId,
           });
         }
 
@@ -376,6 +390,7 @@ export class SceneScheduler {
           input_summary: result.inputSummary,
           output_meta: metaStr.str,
           duration_ms: npcDuration,
+          trace_id: traceId,
         });
 
         /**
@@ -414,6 +429,7 @@ export class SceneScheduler {
             total: npcTotalTokens,
           },
           cost_usd: result.cost_usd ?? null,
+          trace_id: traceId,
         });
 
         if (metaStr.byteLength > META_SOFT_BYTES) {
@@ -426,7 +442,7 @@ export class SceneScheduler {
             soft_limit: META_SOFT_BYTES,
             at: new Date().toISOString(),
           };
-          this.pushMetaWarn(warn);
+          this.pushMetaWarn(warn, traceId);
           console.warn(
             `[engine] scene=${this.scene_id} npc=${npc.id} meta 超软阈值 ${META_SOFT_BYTES}B（实际 ${metaStr.byteLength}B）`,
           );
@@ -445,6 +461,7 @@ export class SceneScheduler {
           output_meta: null,
           duration_ms: Date.now() - npcStart,
           error_message: msg,
+          trace_id: traceId,
         }).catch((e) => console.warn('[engine] 记录错误日志失败:', e));
         bus.emitEvent({
           type: 'error',
@@ -452,6 +469,7 @@ export class SceneScheduler {
           tick: tickNo,
           npc_id: npc.id,
           message: msg,
+          trace_id: traceId,
         });
       }
     });
@@ -466,6 +484,7 @@ export class SceneScheduler {
       tick: tickNo,
       duration_ms: duration,
       cost_usd_total: this.costUsdTotal,
+      trace_id: traceId,
     });
 
     /** 异步裁剪日志 */
@@ -562,14 +581,16 @@ async function persistNpcTick(row: {
   output_meta: string | null;
   duration_ms: number;
   error_message?: string;
+  /** [M4.3.0] 本 tick 全局 trace_id；TRACE_ID_ENABLED=false 传 null，列写 NULL */
+  trace_id?: string | null;
 }): Promise<void> {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     await conn.execute(
       `INSERT INTO npc_tick_log
-         (scene_id, npc_id, tick, started_at, finished_at, status, input_summary, output_meta, duration_ms, error_message)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (scene_id, npc_id, tick, started_at, finished_at, status, input_summary, output_meta, duration_ms, error_message, trace_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.scene_id,
         row.npc_id,
@@ -581,6 +602,7 @@ async function persistNpcTick(row: {
         row.output_meta,
         row.duration_ms,
         row.error_message ?? null,
+        row.trace_id ?? null,
       ],
     );
     if (row.status === 'success' && row.output_meta) {

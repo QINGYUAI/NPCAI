@@ -83,9 +83,13 @@ export interface SimulationMetaV1 {
  * - `tick.npc.updated` 增补 status / duration_ms / tokens / cost_usd / meta_summary（时间线所需最小集）
  * - 新增 `meta.warn`：scheduler pushMetaWarn 时同步广播，前端即刻闪烁徽章（不等 3s 轮询）
  * - `tick.end` 增补 cost_usd_total，用于时间线滚动窗口的顶栏累计
+ *
+ * [M4.3.0] 全部成员新增可选 `trace_id?: string | null`
+ *   - scheduler 在 tick 顶部生成后随 bus event 贯穿，wsServer.serializeEvent 透传给前端
+ *   - 非 scheduler 触发路径（如 POST /api/scene/:id/events 手动注入）允许为 null/undefined
  */
 export type TickEvent =
-  | { type: 'tick.start'; scene_id: number; tick: number; at: string }
+  | { type: 'tick.start'; scene_id: number; tick: number; at: string; trace_id?: string | null }
   | {
       type: 'tick.npc.updated';
       scene_id: number;
@@ -97,6 +101,7 @@ export type TickEvent =
       duration_ms?: number;
       tokens?: { prompt: number; completion: number; total: number };
       cost_usd?: number | null;
+      trace_id?: string | null;
     }
   | {
       type: 'tick.end';
@@ -104,8 +109,16 @@ export type TickEvent =
       tick: number;
       duration_ms: number;
       cost_usd_total?: number;
+      trace_id?: string | null;
     }
-  | { type: 'error'; scene_id: number; tick: number; npc_id?: number; message: string }
+  | {
+      type: 'error';
+      scene_id: number;
+      tick: number;
+      npc_id?: number;
+      message: string;
+      trace_id?: string | null;
+    }
   | {
       type: 'meta.warn';
       scene_id: number;
@@ -115,6 +128,7 @@ export type TickEvent =
       bytes: number;
       soft_limit: number;
       at: string;
+      trace_id?: string | null;
     }
   /**
    * [M4.2.3.b] 反思生成事件
@@ -132,6 +146,7 @@ export type TickEvent =
       reflection_ids: number[];
       source_memory_ids: number[];
       at: string;
+      trace_id?: string | null;
     }
   /**
    * [M4.2.4.b] 场景事件创建广播（POST /api/scene/:id/events 成功后同步 emit）
@@ -149,6 +164,7 @@ export type TickEvent =
       payload: Record<string, unknown> | null;
       visible_npcs: number[] | null;
       at: string;
+      trace_id?: string | null;
     };
 
 /** 从数据库加载的 NPC 行（推理图节点所需最小集合） */

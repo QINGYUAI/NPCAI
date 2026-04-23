@@ -29,6 +29,12 @@ export interface AiLogParams {
   total_tokens?: number | null;
   /** [M4.2.1.a] 本次调用费用（美元）；未匹配模型为 null */
   cost_usd?: number | null;
+  /**
+   * [M4.3.0] tick 级 trace_id（uuid v4）
+   *   - 由 llmClient 从 LogContext.trace_id 透传过来
+   *   - 写入 ai_call_log.trace_id 列，用于 `/api/engine/trace/:id` 跨表回溯
+   */
+  trace_id?: string | null;
 }
 
 function truncate(s: string, max = MAX_CONTENT_LEN): string {
@@ -51,8 +57,8 @@ export function logAiCall(params: AiLogParams): void {
 
   pool
     .execute(
-      `INSERT INTO ai_call_log (ai_config_id, api_type, provider, model, request_info, response_info, request_content, response_content, duration_ms, status, error_message, source, context, prompt_tokens, completion_tokens, total_tokens, cost_usd)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ai_call_log (ai_config_id, api_type, provider, model, request_info, response_info, request_content, response_content, duration_ms, status, error_message, source, context, prompt_tokens, completion_tokens, total_tokens, cost_usd, trace_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         params.ai_config_id ?? null,
         params.api_type,
@@ -71,6 +77,7 @@ export function logAiCall(params: AiLogParams): void {
         ct,
         tt,
         params.cost_usd ?? null,
+        params.trace_id ?? null,
       ]
     )
     .catch((e) => console.warn('[aiLogger] 写入失败:', e));

@@ -21,6 +21,13 @@ export interface LogContext {
   source?: string
   ai_config_id?: number
   context?: Record<string, unknown>
+  /**
+   * [M4.3.0] tick 粒度 trace_id（uuid v4）；用于 ai_call_log.trace_id 列
+   *   - 由 scheduler 生成后经 runGraph → retrieve/store/reflect → chatCompletion 层层透传
+   *   - 非 scheduler 触发路径（如 controllers.reflectOnce 手动反思）可自生成一条
+   *   - 关闭 TRACE_ID_ENABLED 时为 null，列写 NULL，保留 legacy 行为
+   */
+  trace_id?: string | null
 }
 
 /**
@@ -118,6 +125,7 @@ export async function chatCompletion(
       source: logCtx?.source,
       ai_config_id: logCtx?.ai_config_id,
       context: logCtx?.context,
+      trace_id: logCtx?.trace_id,
     })
     throw new Error(errMsg)
   }
@@ -144,6 +152,7 @@ export async function chatCompletion(
       source: logCtx?.source,
       ai_config_id: logCtx?.ai_config_id,
       context: logCtx?.context,
+      trace_id: logCtx?.trace_id,
     })
     throw new Error('模型返回为空')
   }
@@ -175,6 +184,7 @@ export async function chatCompletion(
     source: logCtx?.source,
     ai_config_id: logCtx?.ai_config_id,
     context: logCtx?.context,
+    trace_id: logCtx?.trace_id,
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: totalTokens,
@@ -264,6 +274,7 @@ export async function* chatCompletionStream(
       source: logCtx?.source,
       ai_config_id: logCtx?.ai_config_id,
       context: logCtx?.context,
+      trace_id: logCtx?.trace_id,
     })
     throw new Error(errMsg)
   }
@@ -282,6 +293,7 @@ export async function* chatCompletionStream(
     source: logCtx?.source,
     ai_config_id: logCtx?.ai_config_id,
     context: logCtx?.context,
+    trace_id: logCtx?.trace_id,
   })
 
   const reader = resp.body?.getReader()
@@ -400,6 +412,7 @@ export async function embedText(
       source: logCtx?.source,
       ai_config_id: logCtx?.ai_config_id,
       context: logCtx?.context,
+      trace_id: logCtx?.trace_id,
     })
     throw new Error(errMsg)
   }
@@ -419,6 +432,7 @@ export async function embedText(
       source: logCtx?.source,
       ai_config_id: logCtx?.ai_config_id,
       context: logCtx?.context,
+      trace_id: logCtx?.trace_id,
     })
     throw new Error('Embedding 返回格式异常')
   }
@@ -437,6 +451,7 @@ export async function embedText(
       source: logCtx?.source,
       ai_config_id: logCtx?.ai_config_id,
       context: logCtx?.context,
+      trace_id: logCtx?.trace_id,
     })
     throw new Error(msg)
   }
@@ -454,6 +469,7 @@ export async function embedText(
     source: logCtx?.source,
     ai_config_id: logCtx?.ai_config_id,
     context: logCtx?.context,
+    trace_id: logCtx?.trace_id,
   })
 
   if (useCache) {

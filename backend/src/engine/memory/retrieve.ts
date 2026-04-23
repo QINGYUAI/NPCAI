@@ -34,6 +34,11 @@ export interface RetrieveInput {
   signal?: AbortSignal;
   /** 给 llmClient 做统计用（embed 也会产生 ai_call_log） */
   onMetrics?: (m: { total_tokens: number; cost_usd: number | null }) => void;
+  /**
+   * [M4.3.0] tick 级 trace_id；透传到 embedText 的 LogContext，使 retrieve 的 embed 调用也带 trace_id
+   *   - 检索路径本身不写 DB（只读 Qdrant/MySQL），但伴生的 ai_call_log（embed query）需带 trace
+   */
+  traceId?: string | null;
 }
 
 /** 组装 query 文本；保持短（<=400 字符），避免 embedding 8000 截断损语义 */
@@ -77,6 +82,7 @@ export async function retrieveMemories(input: RetrieveInput): Promise<RetrieveRe
       tick: input.tick,
       node: 'memory-retrieve',
     },
+    trace_id: input.traceId ?? null,
   };
 
   let vector: number[] | null = null;
