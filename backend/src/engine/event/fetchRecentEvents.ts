@@ -26,6 +26,10 @@ interface SceneEventDbRow extends RowDataPacket {
   visible_npcs: unknown;
   created_at: Date | string;
   consumed_tick: number | null;
+  /** [M4.3.0] / [M4.3.1.a] 扩字段，历史行为 NULL */
+  trace_id: string | null;
+  parent_event_id: number | null;
+  conv_turn: number | null;
 }
 
 /**
@@ -47,6 +51,9 @@ function normalizeRow(r: SceneEventDbRow): SceneEventRow {
       : null,
     created_at: r.created_at,
     consumed_tick: r.consumed_tick ?? null,
+    trace_id: r.trace_id ?? null,
+    parent_event_id: r.parent_event_id ?? null,
+    conv_turn: r.conv_turn ?? null,
   };
 }
 
@@ -64,7 +71,8 @@ export async function fetchRecentSceneEvents(params: {
   const hardLimit = params.hardLimit && params.hardLimit > 0 ? params.hardLimit : 500;
 
   const [rows] = await pool.query<SceneEventDbRow[]>(
-    `SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick
+    `SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick,
+            trace_id, parent_event_id, conv_turn
        FROM scene_event
       WHERE scene_id = ?
         AND created_at > NOW(3) - INTERVAL ? SECOND

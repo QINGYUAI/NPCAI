@@ -45,6 +45,10 @@ interface SceneEventDbRow extends RowDataPacket {
   visible_npcs: unknown;
   created_at: Date | string;
   consumed_tick: number | null;
+  /** [M4.3.0] / [M4.3.1.a] 扩字段 */
+  trace_id: string | null;
+  parent_event_id: number | null;
+  conv_turn: number | null;
 }
 
 /** DB 行 → API row，确保 payload/visible_npcs 是 JS 原生对象/数组或 null */
@@ -63,6 +67,9 @@ function normalize(r: SceneEventDbRow): SceneEventRow {
       : null,
     created_at: r.created_at,
     consumed_tick: r.consumed_tick ?? null,
+    trace_id: r.trace_id ?? null,
+    parent_event_id: r.parent_event_id ?? null,
+    conv_turn: r.conv_turn ?? null,
   };
 }
 
@@ -111,7 +118,8 @@ export async function createSceneEvent(req: Request, res: Response) {
 
     /** 回查刚写入行，返回真实 created_at + 所有字段 */
     const [rows] = await pool.query<SceneEventDbRow[]>(
-      `SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick
+      `SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick,
+              trace_id, parent_event_id, conv_turn
          FROM scene_event WHERE id = ?`,
       [eventId],
     );
@@ -161,7 +169,8 @@ export async function listSceneEvents(req: Request, res: Response) {
     const where = since ? 'WHERE scene_id = ? AND id > ?' : 'WHERE scene_id = ?';
     const args: unknown[] = since ? [scene_id, since, limit] : [scene_id, limit];
     const [rows] = await pool.query<SceneEventDbRow[]>(
-      `SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick
+      `SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick,
+              trace_id, parent_event_id, conv_turn
          FROM scene_event ${where}
         ORDER BY created_at DESC, id DESC
         LIMIT ?`,

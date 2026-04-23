@@ -34,6 +34,12 @@ export interface SceneEventRow {
   visible_npcs: number[] | null;
   created_at: Date | string;
   consumed_tick: number | null;
+  /** [M4.3.0] tick 级 uuid v4；历史行为 NULL */
+  trace_id?: string | null;
+  /** [M4.3.1.a] 对话链 parent；NULL=起点，非 dialogue 恒为 NULL */
+  parent_event_id?: number | null;
+  /** [M4.3.1.a] 对话轮序；起点=1，每回复 +1；非 dialogue 恒为 NULL */
+  conv_turn?: number | null;
 }
 
 /**
@@ -68,6 +74,14 @@ export interface EventBlockItem {
   /** 可空；存在则 prompt 里加 `[来自 {actor}]` 前缀 */
   actor: string | null;
   created_at: Date | string;
+  /**
+   * [M4.3.1.a] 对话链回溯字段（仅 dialogue 事件非空）
+   *   - emitDialogueFromSay 需要在本 NPC 的 eventBlock 里找 `actor≠self 且 type==='dialogue'`
+   *     的最新 dialogue event 作为 parent，所以要原样透传 conv_turn / parent_event_id
+   *   - 非 dialogue 事件保持 null；pickEventsForNpc 侧只做字段透传，不做赋值
+   */
+  conv_turn?: number | null;
+  parent_event_id?: number | null;
 }
 
 /**

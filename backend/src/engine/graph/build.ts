@@ -12,6 +12,9 @@ import type { RowDataPacket } from 'mysql2';
 import { z } from 'zod';
 import { pool } from '../../db/connection.js';
 import { chatCompletion } from '../../utils/llmClient.js';
+import { getDialogueConfig } from '../dialogue/config.js';
+import { emitDialogueFromSay } from '../dialogue/emit.js';
+import type { EventBlockItem } from '../event/types.js';
 import { retrieveMemories } from '../memory/retrieve.js';
 import { storeMemory } from '../memory/store.js';
 import { reflectIfTriggered } from '../reflection/reflect.js';
@@ -39,6 +42,12 @@ export interface GraphInput {
    * - 最终注入到 buildPlanPrompt 的 user 消息最前（event > scene > neighbor > memory > tick）
    */
   eventBlock?: string;
+  /**
+   * [M4.3.1.a] 与 eventBlock 同源的结构化 items；dialogue 自动化需要从中筛 parent
+   *   - 由 scheduler 把 pickEventsForNpc().items 原样透传
+   *   - undefined/空数组 → emitDialogueFromSay 视为首条 dialogue（parent=null, conv_turn=1）
+   */
+  eventItems?: EventBlockItem[];
   /**
    * [M4.3.0] tick 级 trace_id（uuid v4）
    *   - scheduler 在 tick 顶部生成一次，贯穿本函数所有子调用（retrieve / store / reflect / callWithRetry）
@@ -240,6 +249,23 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
       onMetrics,
       traceId,
     });
+
+    /**
+     * [M4.3.1.a] speak.latest_say → scene_event{type:'dialogue'} 自动注入（V3=a：memory / event 并存）
+     *   - 串在 storeMemory 之后：memory 是私有记忆，event 是场景公共广播，两条职责正交
+     *   - 失败只 warn，不 throw；storeMemory 和 memory-summary / reflect 不受影响
+     *   - DIALOGUE_AUTO_EVENT_ENABLED=false 时 emitDialogueFromSay 内部短路返回 null，完全回退 M4.2
+     *   - parent / conv_turn 由 eventItems 就地筛（见 dialogue/emit.ts::pickDialogueParent）
+     */
+    if (getDialogueConfig().enabled) {
+      await emitDialogueFromSay({
+        scene_id: input.scene.id,
+        actor: npc.name,
+        content: speakResult.latest_say,
+        eventItems: input.eventItems ?? null,
+        trace_id: traceId,
+      });
+    }
   }
 
   /** memory 摘要节点（保留）：失败不影响整体 */

@@ -26,6 +26,13 @@ export interface PickEventsInput {
   consumedSet: Set<string>;
   /** 单 NPC 单 tick 最多注入事件数 */
   maxPerTick: number;
+  /**
+   * [M4.3.1.a] 当前 NPC 名；用于过滤「自播 dialogue」
+   *   - V2=b：actor 名称 === 本 NPC 名称 且 type==='dialogue' 的事件直接丢弃
+   *   - 设计原因：避免 NPC A 下 tick 把自己 t-1 的话视作外部输入形成"自言自语循环"
+   *   - undefined/null 时跳过该过滤（兼容老调用方 / 非 scheduler 入口）
+   */
+  self_actor_name?: string | null;
 }
 
 /**
@@ -35,7 +42,7 @@ export interface PickEventsInput {
  * - 丢弃的条数（visible_npcs 不通过 / consumed 命中 / 超 maxPerTick）累加进 dropped_count
  */
 export function pickEventsForNpc(input: PickEventsInput): EventIntakeResult {
-  const { allEvents, npc_id, consumedSet, maxPerTick } = input;
+  const { allEvents, npc_id, consumedSet, maxPerTick, self_actor_name } = input;
   if (!allEvents || allEvents.length === 0) {
     return { status: 'empty', items: [], consumed_ids: [], dropped_count: 0 };
   }
@@ -51,7 +58,21 @@ export function pickEventsForNpc(input: PickEventsInput): EventIntakeResult {
         continue;
       }
     }
-    /** 2) 已消费去重：`${event_id}:${npc_id}` 命中即跳过 */
+    /**
+     * 2) [M4.3.1.a V2=b] 自播 dialogue 过滤：actor === self_actor_name 的 dialogue 丢弃
+     *    - 仅对 type==='dialogue' 生效；weather/system/plot 不受影响（NPC 广播非对话本就不合理，留个空间）
+     *    - self_actor_name 未传则跳过本步骤，保持 M4.2 行为
+     */
+    if (
+      self_actor_name &&
+      ev.type === 'dialogue' &&
+      ev.actor != null &&
+      ev.actor === self_actor_name
+    ) {
+      dropped += 1;
+      continue;
+    }
+    /** 3) 已消费去重：`${event_id}:${npc_id}` 命中即跳过 */
     if (consumedSet.has(`${ev.id}:${npc_id}`)) {
       dropped += 1;
       continue;
@@ -75,6 +96,9 @@ export function pickEventsForNpc(input: PickEventsInput): EventIntakeResult {
     content: ev.content,
     actor: ev.actor,
     created_at: ev.created_at,
+    /** [M4.3.1.a] 原样透传对话链字段，emit 时就地筛 parent，零额外 DB IO */
+    conv_turn: ev.conv_turn ?? null,
+    parent_event_id: ev.parent_event_id ?? null,
   }));
 
   return {

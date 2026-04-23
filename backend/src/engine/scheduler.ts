@@ -330,6 +330,8 @@ export class SceneScheduler {
         npc_id: npc.id,
         consumedSet,
         maxPerTick: eventCfg.maxPerTick,
+        /** [M4.3.1.a V2=b] 自播 dialogue 过滤：A 不消费自己 t-1 的 dialogue event，避免自言自语循环 */
+        self_actor_name: npc.name,
       });
       const eventBlock = buildEventBlock(intake.items);
 
@@ -342,6 +344,8 @@ export class SceneScheduler {
           dryRun: this.cfg.dry_run,
           signal,
           eventBlock,
+          /** [M4.3.1.a] 同源结构化 items，graph 内 emitDialogueFromSay 用于就地筛 parent */
+          eventItems: intake.items,
           traceId,
         });
         this.costUsdTotal += result.cost_usd || 0;
