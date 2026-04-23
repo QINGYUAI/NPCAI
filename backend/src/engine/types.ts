@@ -165,6 +165,10 @@ export type TickEvent =
       visible_npcs: number[] | null;
       at: string;
       trace_id?: string | null;
+      /** [M4.3.1.a] dialogue 回复链 parent；非 dialogue / 会话起点 = null */
+      parent_event_id?: number | null;
+      /** [M4.3.1.a] 对话轮序；起点=1，每回复 +1；非 dialogue = null */
+      conv_turn?: number | null;
     };
 
 /** 从数据库加载的 NPC 行（推理图节点所需最小集合） */

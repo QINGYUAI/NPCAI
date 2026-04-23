@@ -159,6 +159,9 @@ export async function emitDialogueFromSay(
       at: created_at instanceof Date ? created_at.toISOString() : String(created_at),
       /** [M4.3.0] WS 带 trace_id，便于前端时间线按 trace 归集 */
       trace_id: input.trace_id ?? null,
+      /** [M4.3.1.c] WS 带对话链字段，让前端 ring buffer 实时可见「↩ 回复」徽章与气泡「💬 回应」后缀 */
+      parent_event_id,
+      conv_turn,
     });
 
     return { event_id, parent_event_id, conv_turn, content };

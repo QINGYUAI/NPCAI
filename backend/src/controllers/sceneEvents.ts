@@ -139,6 +139,10 @@ export async function createSceneEvent(req: Request, res: Response) {
       payload: row.payload,
       visible_npcs: row.visible_npcs,
       at: new Date().toISOString(),
+      /** [M4.3.0 / M4.3.1.c] WS 下发 trace 与对话链字段；手动注入的 dialogue 亦可被前端展示回复徽章 */
+      trace_id: row.trace_id ?? null,
+      parent_event_id: row.parent_event_id ?? null,
+      conv_turn: row.conv_turn ?? null,
     });
 
     return res.json({ code: 0, data: row });
