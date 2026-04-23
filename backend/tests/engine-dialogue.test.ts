@@ -147,7 +147,7 @@ describe('[M4.3.1.a] emitDialogueFromSay 写库 + 广播', () => {
     expect(busEmitMock).not.toHaveBeenCalled();
   });
 
-  it('用例6：SQL 9 参数，末三位依次是 trace_id / parent_event_id / conv_turn', async () => {
+  it('用例6：SQL 10 参数，末四位依次是 trace_id / parent_event_id / conv_turn / created_tick', async () => {
     const { emitDialogueFromSay } = await import('../src/engine/dialogue/emit.js');
     const items: EventBlockItem[] = [
       {
@@ -176,8 +176,10 @@ describe('[M4.3.1.a] emitDialogueFromSay 写库 + 广播', () => {
     expect(executeMock).toHaveBeenCalledTimes(1);
     const [sql, params] = executeMock.mock.calls[0] as [string, unknown[]];
     expect(sql).toMatch(/INSERT INTO scene_event/);
-    expect(sql).toMatch(/\(scene_id, type, actor, content, payload, visible_npcs, trace_id, parent_event_id, conv_turn\)/);
-    expect(params).toHaveLength(9);
+    expect(sql).toMatch(
+      /\(scene_id, type, actor, content, payload, visible_npcs, trace_id, parent_event_id, conv_turn, created_tick\)/,
+    );
+    expect(params).toHaveLength(10);
     expect(params[0]).toBe(9);
     expect(params[1]).toBe('dialogue');
     expect(params[2]).toBe('小明');
@@ -188,6 +190,8 @@ describe('[M4.3.1.a] emitDialogueFromSay 写库 + 广播', () => {
     expect(params[6]).toBe('aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee');
     expect(params[7]).toBe(77);
     expect(params[8]).toBe(2);
+    /** [M4.4.0] 未传 current_tick → 写入 null（兼容未接入 scheduler 的入口） */
+    expect(params[9]).toBeNull();
   });
 
   it('用例7：成功后 bus.emitEvent("scene.event.created") 带 trace_id 与 event_type=dialogue', async () => {

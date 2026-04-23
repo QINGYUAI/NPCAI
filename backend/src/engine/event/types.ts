@@ -40,6 +40,8 @@ export interface SceneEventRow {
   parent_event_id?: number | null;
   /** [M4.3.1.a] 对话轮序；起点=1，每回复 +1；非 dialogue 恒为 NULL */
   conv_turn?: number | null;
+  /** [M4.4.0] 事件产生时的 tick 号；历史行为 NULL；供 echo 按 tick 差精确判窗口 */
+  created_tick?: number | null;
 }
 
 /**
@@ -82,6 +84,8 @@ export interface EventBlockItem {
    */
   conv_turn?: number | null;
   parent_event_id?: number | null;
+  /** [M4.4.0] 事件产生时的 tick 号；历史或非 dialogue 为 null */
+  created_tick?: number | null;
 }
 
 /**

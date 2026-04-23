@@ -39,6 +39,8 @@ export interface EmitDialogueInput {
   eventItems?: EventBlockItem[] | null;
   /** [M4.3.0] tick 级 trace_id；null 走 M4.2 行为（写 NULL） */
   trace_id?: string | null;
+  /** [M4.4.0] 当前 tick 号；写入 scene_event.created_tick，供 echo 按 tick 差判窗口 */
+  current_tick?: number | null;
 }
 
 export interface EmitDialogueResult {
@@ -116,8 +118,8 @@ export async function emitDialogueFromSay(
   try {
     const [ins] = await pool.execute<ResultSetHeader>(
       `INSERT INTO scene_event
-         (scene_id, type, actor, content, payload, visible_npcs, trace_id, parent_event_id, conv_turn)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (scene_id, type, actor, content, payload, visible_npcs, trace_id, parent_event_id, conv_turn, created_tick)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.scene_id,
         'dialogue',
@@ -129,6 +131,8 @@ export async function emitDialogueFromSay(
         input.trace_id ?? null,
         parent_event_id,
         conv_turn,
+        /** [M4.4.0] 事件产生时 tick 号；null 等价于老行为（历史数据 + 未接入 scheduler 的手插入口） */
+        input.current_tick ?? null,
       ],
     );
     const event_id = Number(ins.insertId);
@@ -162,6 +166,8 @@ export async function emitDialogueFromSay(
       /** [M4.3.1.c] WS 带对话链字段，让前端 ring buffer 实时可见「↩ 回复」徽章与气泡「💬 回应」后缀 */
       parent_event_id,
       conv_turn,
+      /** [M4.4.0] WS 带 created_tick，前端按 tick 归档 / echo 窗口对齐 */
+      created_tick: input.current_tick ?? null,
     });
 
     return { event_id, parent_event_id, conv_turn, content };

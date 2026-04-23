@@ -46,6 +46,17 @@ export interface PickEventsInput {
    *   - 单测可直接传裁剪 map 断言
    */
   parentMap?: Map<number, EchoChainNode>;
+  /**
+   * [M4.4.0 L-4 修复] 当前 tick 号（scheduler 传入）
+   *   - 配合 echoWindowTick + candidate.created_tick，让 echo 判据按 tick 差精确判窗口
+   *   - 与 created_tick 同时缺失时 echo 退化为 M4.3 行为（仅 conv_turn + 链交替）
+   */
+  currentTick?: number | null;
+  /**
+   * [M4.4.0] 回声窗口（单位=tick），对齐 DialogueConfig.echoWindowTick
+   *   - ≤0 视为不启用按 tick 差的窗口判据
+   */
+  echoWindowTick?: number | null;
 }
 
 /**
@@ -63,6 +74,8 @@ export function pickEventsForNpc(input: PickEventsInput): EventIntakeResult {
     self_actor_name,
     echoMaxTurn,
     parentMap,
+    currentTick,
+    echoWindowTick,
   } = input;
   if (!allEvents || allEvents.length === 0) {
     return { status: 'empty', items: [], consumed_ids: [], dropped_count: 0 };
@@ -133,9 +146,12 @@ export function pickEventsForNpc(input: PickEventsInput): EventIntakeResult {
           actor: ev.actor,
           parent_event_id: ev.parent_event_id ?? null,
           conv_turn: ev.conv_turn ?? null,
+          created_tick: ev.created_tick ?? null,
         },
         byId: echoMap,
         echoMaxTurn: echoMaxTurn as number,
+        currentTick: currentTick ?? null,
+        windowTick: echoWindowTick ?? null,
       })
     ) {
       dropped += 1;
@@ -166,6 +182,8 @@ export function pickEventsForNpc(input: PickEventsInput): EventIntakeResult {
     /** [M4.3.1.a] 原样透传对话链字段，emit 时就地筛 parent，零额外 DB IO */
     conv_turn: ev.conv_turn ?? null,
     parent_event_id: ev.parent_event_id ?? null,
+    /** [M4.4.0] 透传 created_tick，让下游（emit）无需再查 DB 就能填新行 */
+    created_tick: ev.created_tick ?? null,
   }));
 
   return {

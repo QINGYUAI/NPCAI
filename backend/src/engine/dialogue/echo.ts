@@ -37,6 +37,8 @@ export interface EchoChainNode {
   actor: string | null;
   parent_event_id?: number | null;
   conv_turn?: number | null;
+  /** [M4.4.0] 事件产生时的 tick 号；用于按 tick 差精确判窗口（解 L-4） */
+  created_tick?: number | null;
 }
 
 export interface EchoGuardParams {
@@ -46,6 +48,15 @@ export interface EchoGuardParams {
   byId: Map<number, EchoChainNode>;
   /** 同 DialogueConfig.echoMaxTurn；≤0 视为禁用 */
   echoMaxTurn: number;
+  /**
+   * [M4.4.0 L-4 修复] 当前 tick 号（由 scheduler 传入）；
+   * - 若 currentTick + windowTick 同时提供，且 candidate.created_tick 存在，
+   *   则仅对「currentTick - created_tick ≤ windowTick」的候选判拦，超窗口放行
+   * - 二者任一缺失 → 退化为 M4.3 行为（仅 conv_turn + 链交替判）
+   */
+  currentTick?: number | null;
+  /** [M4.4.0] 回声窗口（单位=tick）；与 DIALOGUE_ECHO_WINDOW_TICK 对齐 */
+  windowTick?: number | null;
 }
 
 /**
@@ -64,6 +75,7 @@ export function buildParentMap(
       actor: e.actor ?? null,
       parent_event_id: e.parent_event_id ?? null,
       conv_turn: e.conv_turn ?? null,
+      created_tick: e.created_tick ?? null,
     });
   }
   return m;
@@ -103,7 +115,7 @@ export function walkChain(
  * - 返回 false = 放行
  */
 export function isEchoBlocked(p: EchoGuardParams): boolean {
-  const { candidate, byId, echoMaxTurn } = p;
+  const { candidate, byId, echoMaxTurn, currentTick, windowTick } = p;
 
   if (echoMaxTurn <= 0) return false;
   if (candidate.type !== 'dialogue') return false;
@@ -112,6 +124,21 @@ export function isEchoBlocked(p: EchoGuardParams): boolean {
   /** conv_turn 缺失（历史数据 / 手插事件） → 无法断言回声，放行 */
   const turn = candidate.conv_turn;
   if (typeof turn !== 'number' || turn < echoMaxTurn + 1) return false;
+
+  /**
+   * [M4.4.0 L-4 修复] 按 tick 差窗口先判：候选已超窗口视为链已失效，放行
+   * - 仅当 currentTick + windowTick + candidate.created_tick 全部可用才启用，否则退回 M4.3 行为
+   * - 窗口单位 = tick；典型 windowTick=10，currentTick=100，created_tick=80 → 差=20 > 10 → 放行
+   */
+  if (
+    typeof currentTick === 'number' &&
+    typeof windowTick === 'number' &&
+    windowTick > 0 &&
+    typeof candidate.created_tick === 'number'
+  ) {
+    const diff = currentTick - candidate.created_tick;
+    if (diff > windowTick) return false;
+  }
 
   /** 回溯 N+1 层 actor 序列（含自身） */
   const needLen = echoMaxTurn + 1;

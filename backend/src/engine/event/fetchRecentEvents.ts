@@ -26,10 +26,11 @@ interface SceneEventDbRow extends RowDataPacket {
   visible_npcs: unknown;
   created_at: Date | string;
   consumed_tick: number | null;
-  /** [M4.3.0] / [M4.3.1.a] 扩字段，历史行为 NULL */
+  /** [M4.3.0] / [M4.3.1.a] / [M4.4.0] 扩字段，历史行为 NULL */
   trace_id: string | null;
   parent_event_id: number | null;
   conv_turn: number | null;
+  created_tick: number | null;
 }
 
 /**
@@ -54,31 +55,74 @@ function normalizeRow(r: SceneEventDbRow): SceneEventRow {
     trace_id: r.trace_id ?? null,
     parent_event_id: r.parent_event_id ?? null,
     conv_turn: r.conv_turn ?? null,
+    created_tick: r.created_tick ?? null,
   };
 }
 
 /**
- * 拉取某场景最近 lookbackSeconds 秒内的事件（按 created_at DESC）
- * - `hardLimit` 是 SQL 层截断上限：场景级全量拉取，防止极端场景下 N 秒内涌入成千上万事件把内存打爆
- *   典型值 = maxPerTick × NPC 数量 × 2，由 scheduler 估算后传入；默认 500
+ * [M4.4.0 Q2a] 混合窗口拉取某场景最近事件（按 created_at DESC）
+ *
+ * 混合窗口策略：
+ *   - 时间窗：created_at > NOW() - lookbackSeconds 秒
+ *   - 条数窗：最近 lookbackCount 条（按 id DESC，id 在 scene_event 里单调递增）
+ *   - 两窗口取**并集**（UNION）：任一满足即返回 → 解 L-1（budget skip 拉长 tick 间隔致老事件 60s 外被丢）
+ *   - lookbackCount = 0 时仅走纯时间窗（回 M4.3 行为）
+ *
+ * 参数：
+ *   - `hardLimit` 是 SQL 层截断上限：防止极端场景下涌入成千上万事件把内存打爆
+ *     典型值 = max(lookbackCount, maxPerTick × NPC 数量 × 2)；默认 500
  */
 export async function fetchRecentSceneEvents(params: {
   scene_id: number;
   lookbackSeconds: number;
+  lookbackCount?: number;
   hardLimit?: number;
 }): Promise<SceneEventRow[]> {
   const { scene_id, lookbackSeconds } = params;
+  const lookbackCount = params.lookbackCount && params.lookbackCount > 0 ? params.lookbackCount : 0;
   const hardLimit = params.hardLimit && params.hardLimit > 0 ? params.hardLimit : 500;
 
+  /** 仅时间窗（lookbackCount=0）或关闭了条数窗，走 M4.3 单分支即可 */
+  if (lookbackCount === 0) {
+    const [rows] = await pool.query<SceneEventDbRow[]>(
+      `SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick,
+              trace_id, parent_event_id, conv_turn, created_tick
+         FROM scene_event
+        WHERE scene_id = ?
+          AND created_at > NOW(3) - INTERVAL ? SECOND
+        ORDER BY created_at DESC
+        LIMIT ?`,
+      [scene_id, lookbackSeconds, hardLimit],
+    );
+    return rows.map(normalizeRow);
+  }
+
+  /**
+   * 混合窗口：用 UNION DISTINCT 取时间窗 ∪ 条数窗
+   * - 子查询 A：时间窗内
+   * - 子查询 B：按 id DESC 取最近 lookbackCount 条
+   * - 外层按 created_at DESC 再排 + hardLimit 截断
+   */
   const [rows] = await pool.query<SceneEventDbRow[]>(
-    `SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick,
-            trace_id, parent_event_id, conv_turn
-       FROM scene_event
-      WHERE scene_id = ?
-        AND created_at > NOW(3) - INTERVAL ? SECOND
-      ORDER BY created_at DESC
-      LIMIT ?`,
-    [scene_id, lookbackSeconds, hardLimit],
+    `SELECT * FROM (
+       (SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick,
+               trace_id, parent_event_id, conv_turn, created_tick
+          FROM scene_event
+         WHERE scene_id = ?
+           AND created_at > NOW(3) - INTERVAL ? SECOND
+         ORDER BY id DESC
+         LIMIT ?)
+       UNION DISTINCT
+       (SELECT id, scene_id, type, actor, content, payload, visible_npcs, created_at, consumed_tick,
+               trace_id, parent_event_id, conv_turn, created_tick
+          FROM scene_event
+         WHERE scene_id = ?
+         ORDER BY id DESC
+         LIMIT ?)
+     ) u
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [scene_id, lookbackSeconds, hardLimit, scene_id, lookbackCount, hardLimit],
   );
   return rows.map(normalizeRow);
 }

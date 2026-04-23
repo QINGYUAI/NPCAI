@@ -169,6 +169,8 @@ export type TickEvent =
       parent_event_id?: number | null;
       /** [M4.3.1.a] 对话轮序；起点=1，每回复 +1；非 dialogue = null */
       conv_turn?: number | null;
+      /** [M4.4.0] 事件产生时的 tick 号；用于前端按 tick 归档 + echo 窗口对齐 */
+      created_tick?: number | null;
     };
 
 /** 从数据库加载的 NPC 行（推理图节点所需最小集合） */

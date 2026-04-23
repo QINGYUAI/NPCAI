@@ -21,9 +21,16 @@ const DEFAULTS = {
   /**
    * tick 头读「created_at > NOW() - lookbackSeconds」且未被本 NPC 消费的事件
    * - 太大：老事件反复挤占 prompt token；太小：错过上一 tick 刚注入的事件
-   * - 默认 60s 与 tick 间隔 30s 留 2× 容差
+   * - [M4.4.0 Q2a] 默认从 60 → 120 秒，配合混合窗口解对话链被 budget skip 拉断问题（L-1）
    */
-  EVENT_LOOKBACK_SECONDS: '60',
+  EVENT_LOOKBACK_SECONDS: '120',
+  /**
+   * [M4.4.0 Q2a] 混合窗口条数条件：拉"最近 N 条"事件
+   * - 与 lookbackSeconds 取并集：时间窗 OR 条数窗，任一满足即返回
+   * - 用于在 budget skip 拉长 tick 间隔时仍保住对话链（conv_turn 回看）
+   * - 0 = 关闭条数窗，回到纯时间窗（M4.3 行为）
+   */
+  EVENT_LOOKBACK_COUNT: '50',
   /**
    * 单 tick 单 NPC 最多注入多少事件到 plan prompt
    * - 超出按 created_at DESC 截断，老的丢弃（LLM 关注最新世界状态即可）
@@ -49,11 +56,26 @@ function readPositiveInt(key: keyof typeof DEFAULTS): number {
   return n;
 }
 
+/** [M4.4.0] 允许 0 的非负整数（EVENT_LOOKBACK_COUNT=0 表示关闭条数窗） */
+function readNonNegativeInt(key: keyof typeof DEFAULTS): number {
+  const raw = readStr(key);
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`[event.config] env ${key} 必须是非负整数，当前=${raw}`);
+  }
+  return n;
+}
+
 export interface EventBusConfig {
   /** false = event-intake 节点完全短路（查询跳过 + prompt 注入跳过） */
   enabled: boolean;
   /** event-intake 回看窗口（秒） */
   lookbackSeconds: number;
+  /**
+   * [M4.4.0] 混合窗口条数条件：查询返回最近 N 条事件（与时间窗取并集）
+   * 0 = 关闭条数窗（纯时间窗，回 M4.3 行为）
+   */
+  lookbackCount: number;
   /** 单 tick 单 NPC 最多消费事件数（按 created_at DESC 截断） */
   maxPerTick: number;
 }
@@ -69,6 +91,7 @@ export function getEventConfig(): EventBusConfig {
   cached = {
     enabled: readBool('EVENT_BUS_ENABLED'),
     lookbackSeconds: readPositiveInt('EVENT_LOOKBACK_SECONDS'),
+    lookbackCount: readNonNegativeInt('EVENT_LOOKBACK_COUNT'),
     maxPerTick: readPositiveInt('EVENT_MAX_PER_TICK'),
   };
   return cached;

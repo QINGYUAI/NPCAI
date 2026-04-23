@@ -38,13 +38,15 @@ afterEach(() => {
 /* -------------------------------- config.ts -------------------------------- */
 
 describe('[M4.2.4.a] getEventConfig env 解析', () => {
-  it('默认值：enabled=true / lookback=60 / max=10', () => {
+  it('默认值：[M4.4.0] enabled=true / lookback=120s / count=50 / max=10', () => {
     delete process.env.EVENT_BUS_ENABLED;
     delete process.env.EVENT_LOOKBACK_SECONDS;
+    delete process.env.EVENT_LOOKBACK_COUNT;
     delete process.env.EVENT_MAX_PER_TICK;
     const cfg = getEventConfig();
     expect(cfg.enabled).toBe(true);
-    expect(cfg.lookbackSeconds).toBe(60);
+    expect(cfg.lookbackSeconds).toBe(120);
+    expect(cfg.lookbackCount).toBe(50);
     expect(cfg.maxPerTick).toBe(10);
   });
 

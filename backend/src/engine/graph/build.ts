@@ -264,6 +264,8 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
         content: speakResult.latest_say,
         eventItems: input.eventItems ?? null,
         trace_id: traceId,
+        /** [M4.4.0] 把 tick 号带下去，新行会填 scene_event.created_tick，供下一 tick echo 精判 */
+        current_tick: tick,
       });
     }
   }

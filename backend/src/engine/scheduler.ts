@@ -267,8 +267,14 @@ export class SceneScheduler {
         sceneEvents = await fetchRecentSceneEvents({
           scene_id: this.scene_id,
           lookbackSeconds: eventCfg.lookbackSeconds,
+          /** [M4.4.0 Q2a] 混合窗口：条数窗与时间窗取并集，解 budget skip 拉断对话链（L-1） */
+          lookbackCount: eventCfg.lookbackCount,
           /** hardLimit 估算：max per-NPC × NPC 数 × 2 buffer；避免大量定向事件被误丢 */
-          hardLimit: Math.max(eventCfg.maxPerTick * npcs.length * 2, eventCfg.maxPerTick),
+          hardLimit: Math.max(
+            eventCfg.lookbackCount,
+            eventCfg.maxPerTick * npcs.length * 2,
+            eventCfg.maxPerTick,
+          ),
         });
         if (sceneEvents.length > 0) {
           consumedSet = await fetchConsumedSet({
@@ -357,6 +363,9 @@ export class SceneScheduler {
         /** [M4.3.1.b] 回声保护：0 等价禁用；parentMap scene 级复用 */
         echoMaxTurn,
         parentMap: echoParentMap,
+        /** [M4.4.0 L-4 修复] 带 tick 号 + 窗口给 echo，超窗口的 candidate 不再拦 */
+        currentTick: tickNo,
+        echoWindowTick: dialogueCfg.enabled ? dialogueCfg.echoWindowTick : null,
       });
       const eventBlock = buildEventBlock(intake.items);
 
