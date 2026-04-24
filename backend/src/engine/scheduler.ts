@@ -26,6 +26,8 @@ import { fetchScheduleForNpc } from './schedule/fetch.js';
 import { resolveScheduledActivity } from './schedule/resolve.js';
 import { resolveEffectiveHourFromClock } from './schedule/softWindow.js';
 import { getMemoryConfig } from './memory/config.js';
+import { getGoalConfig } from './goal/config.js';
+import { fetchActiveGoalForNpc } from './goal/fetch.js';
 import type {
   EngineConfig,
   EngineStatus,
@@ -313,6 +315,8 @@ export class SceneScheduler {
      */
     const scheduleCfg = getScheduleConfig();
     const memoryCfg = getMemoryConfig();
+    /** [M4.5.1.b] GOAL_ENABLED=false 时 scheduler 不查 npc_goal，plan 回 M4.5.0 行为（纯 schedule/event 二路） */
+    const goalCfg = getGoalConfig();
     /**
      * [M4.5.0 U-N] effectiveHour = computeEffectiveHour(hour, minute, windowMin)
      *   - SIM_CLOCK_HOUR / SIM_CLOCK_MINUTE 用于单测 / 演示注入；非法值回退系统时钟
@@ -412,6 +416,20 @@ export class SceneScheduler {
         scheduledActivity = row ? resolveScheduledActivity([row], currentHour) : null;
       }
 
+      /**
+       * [M4.5.1.b] 为本 NPC 预取"当前活跃目标"（GOAL_ENABLED=false 跳过）
+       *   - fetchActiveGoalForNpc 内部已吞错返回 null，查询失败不阻 tick 主链路
+       *   - 仅透传 id/title/priority 三字段，payload 交给 REST 层按需读取
+       *   - plan 节点按 event > goal > schedule > idle 决定是否注入（见 graph/planPath.ts）
+       */
+      let activeGoal: { id: number; title: string; priority: number } | null = null;
+      if (goalCfg.enabled) {
+        const row = await fetchActiveGoalForNpc(npc.id);
+        if (row) {
+          activeGoal = { id: row.id, title: row.title, priority: row.priority };
+        }
+      }
+
       try {
         const result = await runGraph({
           scene,
@@ -428,6 +446,8 @@ export class SceneScheduler {
           scheduledActivity,
           /** [M4.5.0 U-B] 当前时段 hour（含 soft window）；MEMORY_SLOT_HOUR_ENABLED=false 时为 null */
           currentSlotHour: slotHourForGraph,
+          /** [M4.5.1.b] 当前活跃目标；GOAL_ENABLED=false 或无目标时为 null */
+          activeGoal,
         });
         this.costUsdTotal += result.cost_usd || 0;
         /** [M4.2.1.a] 记录真实 tokens 供下一 tick budget 判定；dry_run 仍为 0 */

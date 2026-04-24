@@ -56,19 +56,26 @@ export function snapTo(n: number, step: number) {
  *
  * [M4.4.1.b] 可选 scheduledActivity：当既无 latest_say 也无 latest_action 时，
  *   若存在日程模板则展示 `📅 当前日程: <activity>[ @ <location>]`。
- *   - say 优先级最高，完全覆盖日程（对话态度更活跃）
- *   - action 次之；schedule 仅做"闲时回退"，避免 NPC 画面空白
- *   - 入参可以是后端 SimulationMetaV1.scheduled_activity 对象或直接透传 null/undefined
+ *
+ * [M4.5.1.b Q-b5=a] 可选 activeGoal：四级回退顺序为 say > action > goal > schedule。
+ *   - 动态目标优先级高于日程：NPC 目标进行中时应明确显示"🎯 目标: <title>"
+ *   - 后端 meta.plan_path='goal' 时推荐传入 activeGoal；非 goal 分支传 null 走老逻辑
+ *   - goal 仅在 say / action 都为空时露出，避免盖掉真实对话
  */
 export type BubbleSchedule = {
   activity?: string | null
   location?: string | null
 } | null | undefined
 
+export type BubbleGoal = {
+  title?: string | null
+} | null | undefined
+
 export function extractBubbleText(
   meta: Record<string, unknown> | null | undefined,
   replyTo?: string | null,
   scheduledActivity?: BubbleSchedule,
+  activeGoal?: BubbleGoal,
 ): string {
   if (!meta || typeof meta !== 'object') return ''
   const say = (meta as Record<string, unknown>).latest_say
@@ -80,7 +87,13 @@ export function extractBubbleText(
   const act = (meta as Record<string, unknown>).latest_action
   if (typeof act === 'string' && act.trim()) return '・' + act.trim()
 
-  /** [M4.4.1.b] 闲时回退：显示当前小时的日程活动 */
+  /** [M4.5.1.b] 第三级：动态目标命中（plan_path='goal'），优先于日程回退 */
+  if (activeGoal && typeof activeGoal === 'object') {
+    const title = typeof activeGoal.title === 'string' ? activeGoal.title.trim() : ''
+    if (title) return `🎯 目标: ${title}`
+  }
+
+  /** [M4.4.1.b] 第四级（闲时回退）：显示当前小时的日程活动 */
   if (scheduledActivity && typeof scheduledActivity === 'object') {
     const activity = typeof scheduledActivity.activity === 'string' ? scheduledActivity.activity.trim() : ''
     if (activity) {

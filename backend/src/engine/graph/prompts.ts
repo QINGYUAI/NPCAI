@@ -62,7 +62,7 @@ export function buildPlanPrompt(params: {
   /**
    * [M4.4.1.b] 当前小时的日程条目（由 scheduler 预解析注入）
    * - 非空时在 system 结尾加「【当前时段计划】<activity> at <location>」一行
-   * - 调用方（runGraph）按 Q4=a 语义：仅在"无事件"分支才传入非 null
+   * - 调用方（runGraph）按 Q4=a 语义：仅在"无事件 && 非 goal 分支"才传入非 null
    * - location=null 时仅显示 activity；priority 仅 UI 用，prompt 不展示
    */
   scheduledActivity?: {
@@ -70,18 +70,44 @@ export function buildPlanPrompt(params: {
     location: string | null;
     priority: number;
   } | null;
+  /**
+   * [M4.5.1.b Q-b2=a] 当前活跃目标（由 scheduler 经 fetchActiveGoalForNpc 注入）
+   * - 非空时在 system 结尾加「【当前目标】<title>」一行，并告知优先执行
+   * - 调用方（runGraph）仅在 plan_path='goal' 分支传非 null；此时 scheduledActivity 必须传 null 以避免两条上下文并存干扰 LLM
+   * - priority 仅供 UI 展示，prompt 不写出
+   */
+  activeGoal?: {
+    id: number;
+    title: string;
+    priority: number;
+  } | null;
 }): { system: string; user: string } {
-  const { scene, npc, neighbors, prevSummary, tick, memoryBlock, eventBlock, scheduledActivity } =
-    params;
+  const {
+    scene,
+    npc,
+    neighbors,
+    prevSummary,
+    tick,
+    memoryBlock,
+    eventBlock,
+    scheduledActivity,
+    activeGoal,
+  } = params;
 
   /**
-   * 日程提示行：仅在 scheduledActivity 有效时拼，放在 system 末尾
-   *   - 前端气泡对齐：`📅 当前日程: <activity>`；LLM 侧用更中性"当前时段计划"措辞
+   * [M4.5.1.b] 目标/日程二选一拼装（goal 优先，空白 title fall through 到 schedule）：
+   *   - plan_path='goal' → 仅注入【当前目标】；scheduledActivity 期望为 null（由 runGraph 强制）
+   *   - plan_path='schedule' → 仅注入【当前时段计划】
+   *   - plan_path='event' / 'idle' → 两者均不注入
+   * LLM 侧只会看到单路上下文，避免两条"当前任务"竞争。
    */
-  let scheduleLine = '';
-  if (scheduledActivity && scheduledActivity.activity) {
+  let guidanceLine = '';
+  const goalTitle = activeGoal && typeof activeGoal.title === 'string' ? activeGoal.title.trim() : '';
+  if (goalTitle) {
+    guidanceLine = `\n\n【当前目标】${goalTitle}（请优先推进该目标；结合角色性格决定具体做法）`;
+  } else if (scheduledActivity && scheduledActivity.activity) {
     const loc = scheduledActivity.location ? ` at ${scheduledActivity.location}` : '';
-    scheduleLine = `\n\n【当前时段计划】${scheduledActivity.activity}${loc}（请据此展开当前 tick 的 1-3 步计划）`;
+    guidanceLine = `\n\n【当前时段计划】${scheduledActivity.activity}${loc}（请据此展开当前 tick 的 1-3 步计划）`;
   }
 
   const system = `${SYSTEM_PREFIX}
@@ -90,7 +116,7 @@ ${npc.system_prompt || `你的名字是「${npc.name}」。`}
 
 【性格】${npc.personality || '未特别指定'}
 
-【当前任务】为下一小段时间（1-3 步）做一个轻量计划。${scheduleLine}`;
+【当前任务】为下一小段时间（1-3 步）做一个轻量计划。${guidanceLine}`;
 
   const user = `${eventBlock || ''}【场景】${scene.name}${scene.description ? `（${scene.description}）` : ''}
 【同场景角色】${neighbors.map((n) => n.name).join('、') || '无'}

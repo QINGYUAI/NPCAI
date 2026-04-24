@@ -630,8 +630,18 @@ function refreshBubbles() {
       bubbleEnabled.value && n.simulation_meta
         ? (n.simulation_meta as Record<string, unknown>).scheduled_activity ?? null
         : null
+    /** [M4.5.1.b] 动态目标回退（优先级高于 schedule）：后端 plan_path='goal' 时 meta.active_goal 非空 */
+    const goal =
+      bubbleEnabled.value && n.simulation_meta
+        ? (n.simulation_meta as Record<string, unknown>).active_goal ?? null
+        : null
     const text = bubbleEnabled.value
-      ? extractBubbleText(n.simulation_meta, replyTo, sched as Parameters<typeof extractBubbleText>[2])
+      ? extractBubbleText(
+          n.simulation_meta,
+          replyTo,
+          sched as Parameters<typeof extractBubbleText>[2],
+          goal as Parameters<typeof extractBubbleText>[3],
+        )
       : ''
     renderBubble(scene, h, text)
   }

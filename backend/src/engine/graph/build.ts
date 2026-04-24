@@ -20,6 +20,7 @@ import { storeMemory } from '../memory/store.js';
 import { reflectIfTriggered } from '../reflection/reflect.js';
 import type { ReflectionResult } from '../reflection/types.js';
 import type { NpcRow, SceneRow, SimulationMetaV1 } from '../types.js';
+import { computePlanPath } from './planPath.js';
 import {
   buildMemoryBlock,
   buildMemoryPrompt,
@@ -72,6 +73,17 @@ export interface GraphInput {
    *   - null/undefined 时全链路写 NULL，等价 M4.4 行为（MEMORY_SLOT_HOUR_ENABLED=false 路径）
    */
   currentSlotHour?: number | null;
+  /**
+   * [M4.5.1.b Q-b4=a] 本 tick 该 NPC 的活跃目标（由 scheduler 经 fetchActiveGoalForNpc 注入）
+   *   - GOAL_ENABLED=false 或无活跃目标 → null/undefined，等价 M4.5.0 行为（纯 schedule/event 二路）
+   *   - 命中时 plan 节点按"event > goal > schedule > idle"分支注入对应 system 行
+   *   - 仅 scheduler 入口透传；测试 / 手工入口传 null 即可
+   */
+  activeGoal?: {
+    id: number;
+    title: string;
+    priority: number;
+  } | null;
 }
 
 export interface GraphOutput {
@@ -190,14 +202,21 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
 
   /**
    * plan 节点；[M4.2.4.b] 注入 eventBlock（若有）
-   * [M4.4.1.b Q4=a] 日程前置分支：仅当"本 tick 无事件 + scheduledActivity 非空"时传入日程
-   *   - 有事件 → 事件驱动 prompt，忽略日程（避免 hint 干扰）
-   *   - 无事件 + 无日程 → 退化为 M4.4.0 行为
-   *   - 无事件 + 有日程 → 新增【当前时段计划】system 行
+   * [M4.5.1.b Q-b4=a] 三路分支：event > goal > schedule > idle（纯函数 computePlanPath）
+   *   - event：有事件 → 忽略 goal/schedule，保持 M4.3 行为
+   *   - goal：无事件 + activeGoal.priority ≥ schedule.priority → 注入【当前目标】
+   *   - schedule：无事件 + 无 goal / goal 被日程盖过 + 有 scheduledActivity → 注入【当前时段计划】
+   *   - idle：三者皆无 → 退化 M4.4.0 行为
+   * 同一 prompt 只注入一路上下文，避免"当前目标"与"当前时段计划"双线竞争。
    */
   const hasEvents = Array.isArray(input.eventItems) && input.eventItems.length > 0;
-  const planScheduledActivity =
-    !hasEvents && input.scheduledActivity ? input.scheduledActivity : null;
+  const planPath = computePlanPath({
+    hasEvents,
+    activeGoal: input.activeGoal ?? null,
+    scheduledActivity: input.scheduledActivity ?? null,
+  });
+  const planScheduledActivity = planPath === 'schedule' ? input.scheduledActivity ?? null : null;
+  const planActiveGoal = planPath === 'goal' ? input.activeGoal ?? null : null;
   const planPrompt = buildPlanPrompt({
     scene: input.scene,
     npc,
@@ -207,6 +226,7 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     memoryBlock,
     eventBlock: input.eventBlock,
     scheduledActivity: planScheduledActivity,
+    activeGoal: planActiveGoal,
   });
   const planResult = await callWithRetry(
     aiCfg,
@@ -358,10 +378,24 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     plan: plan.slice(0, 3),
     memory_summary: memorySummary,
     /**
-     * [M4.4.1.b] 始终写入 scheduled_activity（即便走事件分支也留档），
-     * 前端气泡按 say>action>schedule 优先级自行决定是否展示
+     * [M4.4.1.b] 始终写入 scheduled_activity（即便走事件 / goal 分支也留档），
+     * 前端气泡按 say>action>goal>schedule 优先级自行决定是否展示
      */
     scheduled_activity: input.scheduledActivity ?? null,
+    /**
+     * [M4.5.1.b] 三路分支落档 + 活跃目标快照
+     *   - plan_path 供前端时间线 / 调试面板可视化分支
+     *   - active_goal 仅 plan_path='goal' 时为非 null，气泡用 title 降级显示"🎯 目标: <title>"
+     */
+    plan_path: planPath,
+    active_goal:
+      planPath === 'goal' && input.activeGoal
+        ? {
+            id: input.activeGoal.id,
+            title: input.activeGoal.title,
+            priority: input.activeGoal.priority,
+          }
+        : null,
     debug: {
       live: true,
       tick,
@@ -393,6 +427,14 @@ function runDryRun(input: GraphInput, inputSummary: string): GraphOutput {
   const action = DRY_ACTIONS[(tick + npc.id) % DRY_ACTIONS.length];
   const emotion = DRY_EMOTIONS[(tick + npc.id) % DRY_EMOTIONS.length];
 
+  /** [M4.5.1.b] dry_run 也按三路纯函数落档 plan_path / active_goal，便于冒烟验证气泡链路 */
+  const hasEvents = Array.isArray(input.eventItems) && input.eventItems.length > 0;
+  const planPath = computePlanPath({
+    hasEvents,
+    activeGoal: input.activeGoal ?? null,
+    scheduledActivity: input.scheduledActivity ?? null,
+  });
+
   const nextMeta: SimulationMetaV1 = {
     version: '1.0',
     last_tick_at: new Date().toISOString(),
@@ -403,6 +445,15 @@ function runDryRun(input: GraphInput, inputSummary: string): GraphOutput {
     memory_summary: prevMeta?.memory_summary ?? `dry_run ${npc.name} 初始记忆`,
     /** [M4.4.1.b] dry_run 也透传日程，方便 SIM_CLOCK_HOUR 演示前端气泡 */
     scheduled_activity: input.scheduledActivity ?? null,
+    plan_path: planPath,
+    active_goal:
+      planPath === 'goal' && input.activeGoal
+        ? {
+            id: input.activeGoal.id,
+            title: input.activeGoal.title,
+            priority: input.activeGoal.priority,
+          }
+        : null,
     debug: { dry_run: true, tick, cost_usd: 0 },
   };
   return { nextMeta, inputSummary, cost_usd: 0 };

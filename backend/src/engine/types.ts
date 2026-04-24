@@ -80,11 +80,29 @@ export interface SimulationMetaV1 {
    * [M4.4.1.b] 当前小时的日程条目（由 scheduler 预解析 + runGraph 原样写入）
    *   - SCHEDULE_ENABLED=false 或无覆盖模板 → null
    *   - 前端气泡在无 latest_say/latest_action 时回退展示 `📅 当前日程: <activity>`
-   *   - 与 plan 节点的 prompt 分支解耦：prompt 仅在"无事件"分支注入，meta 始终写入便于 UI
+   *   - 与 plan 节点的 prompt 分支解耦：prompt 仅在"无事件 && 非 goal 分支"注入，meta 始终写入便于 UI
    */
   scheduled_activity?: {
     activity: string;
     location: string | null;
+    priority: number;
+  } | null;
+  /**
+   * [M4.5.1.b] 本 tick 该 NPC 使用的 plan 分支；便于前端气泡/时间线区分 goal / schedule 状态
+   *   - 'event'：本 tick 有事件驱动，忽略 goal/schedule
+   *   - 'goal'：active goal 命中，已注入 prompt
+   *   - 'schedule'：无 goal / goal 未达优先级，日程驱动
+   *   - 'idle'：三者皆无，退化 M4.4.0 行为
+   */
+  plan_path?: 'event' | 'goal' | 'schedule' | 'idle';
+  /**
+   * [M4.5.1.b] 触发 plan_path='goal' 的目标最小快照；非 goal 分支为 null
+   *   - 前端气泡四级回退（say > action > goal > schedule）使用 title
+   *   - 仅存标题 + id + priority；payload 不内联（meta 软阈值敏感）
+   */
+  active_goal?: {
+    id: number;
+    title: string;
     priority: number;
   } | null;
 }

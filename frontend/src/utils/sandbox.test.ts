@@ -132,4 +132,39 @@ describe('extractBubbleText', () => {
     expect(extractBubbleText({}, null, { activity: '', location: '书房' })).toBe('')
     expect(extractBubbleText({}, null, { activity: '   ', location: null })).toBe('')
   })
+
+  /** [M4.5.1.b] 四级回退：say > action > goal > schedule */
+  it('无 say/action + 有 activeGoal → 显示「🎯 目标: <title>」，优先于 schedule', () => {
+    expect(
+      extractBubbleText(
+        {},
+        null,
+        { activity: '工作', location: '书房' },
+        { title: '去找小美和好' },
+      ),
+    ).toBe('🎯 目标: 去找小美和好')
+  })
+
+  it('有 latest_say 时忽略 activeGoal（say 始终最高级）', () => {
+    expect(
+      extractBubbleText({ latest_say: '你好' }, null, null, { title: '去找小美' }),
+    ).toBe('你好')
+  })
+
+  it('有 latest_action 时忽略 activeGoal（action 第二级）', () => {
+    expect(
+      extractBubbleText({ latest_action: '走路' }, null, null, { title: '去找小美' }),
+    ).toBe('・走路')
+  })
+
+  it('activeGoal.title 空白 → 回退到 schedule（第三级失效跌回第四级）', () => {
+    expect(
+      extractBubbleText({}, null, { activity: '午餐', location: '餐厅' }, { title: '   ' }),
+    ).toBe('📅 当前日程: 午餐 @ 餐厅')
+  })
+
+  it('activeGoal 与 schedule 皆空 → 空串（无任何回退）', () => {
+    expect(extractBubbleText({}, null, null, null)).toBe('')
+    expect(extractBubbleText({}, null, null, { title: '' })).toBe('')
+  })
 })
