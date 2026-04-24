@@ -4,8 +4,13 @@
  */
 import type { ApiResponse } from './client.js'
 
-const baseURL = import.meta.env.VITE_API_BASE || 'http://localhost:3000/api'
-const origin = baseURL.replace(/\/api\/?$/, '')
+/**
+ * origin 解析（方案 D）：
+ *   - VITE_API_BASE 为空 / "/api" → origin 为 ''（同源，fetch('/api/upload/...') 走 Vite proxy）
+ *   - 完整 URL → 剥掉末尾 '/api' 作为 origin，保留跨域能力（后端需放 CORS）
+ */
+const BASE_RAW = (import.meta.env.VITE_API_BASE ?? '').toString().trim()
+const origin = BASE_RAW.startsWith('http') ? BASE_RAW.replace(/\/api\/?$/, '') : ''
 
 /** 内部：上传至指定路径并返回完整 URL；失败抛错 */
 async function uploadToEndpoint(endpoint: string, file: File): Promise<string> {

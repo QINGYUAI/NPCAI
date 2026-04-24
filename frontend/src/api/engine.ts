@@ -87,25 +87,35 @@ export function deleteSceneEvent(scene_id: number, event_id: number) {
 }
 
 /**
- * [M4.2.1.b] 把 http(s)://host:port/api 反推成 ws(s)://host:port，拼接 ws_endpoint
- * - VITE_API_BASE 形如 "http://localhost:3000/api"
- * - 支持自定义覆盖 VITE_WS_BASE（如反向代理场景）
+ * [M4.2.1.b] 生成 ws_endpoint 绝对 URL（方案 D：同源优先）
+ *
+ * 决策顺序：
+ *   1) VITE_WS_BASE 显式覆盖（反向代理 / 不同 host） → 直接拼
+ *   2) VITE_API_BASE 是完整 URL（http/https）→ 反推 host 作为 ws host
+ *   3) 其余情况（空 / '/api' 等相对路径）→ 走 window.location.host（同源，经 Vite proxy `ws: true`）
+ *     · 这让手机 / 局域网 / Tailscale 用 http://<ip>:5173 打开也能建立 WS，无需额外配置
  */
 function resolveWsUrl(endpoint: string, sceneId: number): string {
   const override = (import.meta.env.VITE_WS_BASE as string | undefined)?.trim()
   if (override) {
     return `${override.replace(/\/$/, '')}${endpoint}?scene_id=${sceneId}`
   }
-  const base = (import.meta.env.VITE_API_BASE as string | undefined) || 'http://localhost:3000/api'
-  try {
-    const u = new URL(base)
-    const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${u.host}${endpoint}?scene_id=${sceneId}`
-  } catch {
-    const loc = typeof window !== 'undefined' ? window.location : { protocol: 'http:', host: 'localhost:3000' }
-    const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${proto}//${loc.host}${endpoint}?scene_id=${sceneId}`
+  const base = ((import.meta.env.VITE_API_BASE as string | undefined) || '').trim()
+  if (/^https?:\/\//i.test(base)) {
+    try {
+      const u = new URL(base)
+      const proto = u.protocol === 'https:' ? 'wss:' : 'ws:'
+      return `${proto}//${u.host}${endpoint}?scene_id=${sceneId}`
+    } catch {
+      /** fallthrough 到同源策略 */
+    }
   }
+  const loc =
+    typeof window !== 'undefined'
+      ? window.location
+      : { protocol: 'http:', host: 'localhost:5173' }
+  const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${loc.host}${endpoint}?scene_id=${sceneId}`
 }
 
 export interface EngineWsHandlers {

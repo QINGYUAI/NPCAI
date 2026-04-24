@@ -14,9 +14,17 @@ export interface ApiResponse<T> {
   message?: string
 }
 
-/** 创建基础 axios 实例 */
+/**
+ * 创建基础 axios 实例
+ * baseURL 解析（与 Vite proxy 协作，方案 D）：
+ *   - 未设置 VITE_API_BASE → '/api'（同源相对路径，浏览器直接走 Vite proxy / 反向代理）
+ *   - 显式 "/api" 或空串 → 同上
+ *   - 完整 URL（形如 "http://10.0.0.2:3000/api"）→ 直连；需后端放开 CORS
+ */
+const API_BASE = (import.meta.env.VITE_API_BASE ?? '').toString().trim() || '/api'
+
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || 'http://localhost:3000/api',
+  baseURL: API_BASE,
   timeout: DEFAULT_TIMEOUT,
   headers: { 'Content-Type': 'application/json' },
 })
