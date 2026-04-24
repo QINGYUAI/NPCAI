@@ -82,10 +82,39 @@ async function migrate() {
   }
 
   /**
-   * ─────────────────── [M4.5.1.a] npc_goal 表 占位 ───────────────────
-   * 本文件 M4.5.0 阶段仅建 npc_memory.slot_hour；
-   * 动态目标系统的数据层（npc_goal 建表 + seed skip）将在 M4.5.1.a 批次续写到此处。
+   * ─────────────────── [M4.5.1.a] npc_goal 动态目标表 ───────────────────
+   * 拉票 Q3=a：独立 `npc_goal` 表（与 `npc_schedule` 职责正交）
+   *   - 字段组合 = (npc_id, kind, title, priority, status, created_at, expires_at, payload JSON)
+   *   - 索引设计：
+   *       · (npc_id, status)          —— 查 active goal 的主路径（ORDER BY priority DESC LIMIT 1）
+   *       · (expires_at)              —— 懒过期扫描 / 后台 cron 批量切 done
+   *       · (npc_id, status, priority) —— 可选优化，插入/维护成本比上面两个低一档
+   *   - 无 seed：goal 由 REST 或未来 scene_event 派生创建；空表是正常状态
+   *   - 不加外键：沿用 npc_schedule 风格，便于冷启动 / 数据迁移时宽容
    */
+  console.log('\n📦 M4.5.1.a npc_goal 建表迁移开始');
+  if (await hasTable(conn, dbName, 'npc_goal')) {
+    console.log('⏭  npc_goal 表已存在，跳过建表');
+  } else {
+    await conn.query(`
+      CREATE TABLE npc_goal (
+        id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+        npc_id      BIGINT NOT NULL COMMENT 'NPC 主键（不加外键，便于冷启动）',
+        title       VARCHAR(128) NOT NULL COMMENT '目标短文本，直接注入 plan prompt',
+        kind        ENUM('scene','player','npc','self') NOT NULL DEFAULT 'player'
+                    COMMENT '来源：场景事件 / 玩家下发 / 其他 NPC 驱动 / 自主产生',
+        priority    TINYINT NOT NULL DEFAULT 8 COMMENT '1..10；与 schedule.priority 同轴比较',
+        status      ENUM('active','paused','done','dropped') NOT NULL DEFAULT 'active',
+        created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at  DATETIME DEFAULT NULL COMMENT '到期自动切 done；NULL 表示手动关闭',
+        payload     JSON DEFAULT NULL COMMENT '附加上下文：target_npc_id / target_location / 进度等',
+        INDEX idx_npc_goal_npc_status (npc_id, status),
+        INDEX idx_npc_goal_expires (expires_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        COMMENT='[M4.5.1.a] NPC 动态目标（覆盖 schedule）；REST / scene_event 均可创建'
+    `);
+    console.log('✅ npc_goal 表已创建');
+  }
 
   await conn.end();
   console.log('\n✅ M4.5 迁移完成');
