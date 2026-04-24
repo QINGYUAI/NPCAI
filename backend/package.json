@@ -22,6 +22,7 @@
     "db:migrate:m45": "tsx src/db/migrate-m45.ts",
     "qdrant:init": "tsx scripts/qdrant-init.ts",
     "smoke:engine": "tsx scripts/smoke-engine.ts",
+    "smoke:live-goal": "tsx scripts/live-goal-smoke.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
