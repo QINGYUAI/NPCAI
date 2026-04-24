@@ -84,10 +84,18 @@ function serializeEvent(ev: TickEvent): string {
       tokens: ev.tokens,
       cost_usd: ev.cost_usd,
       trace_id: ev.trace_id ?? null,
+      /**
+       * [M4.5.1.c] 时间线徽章所需最小集：除 M4.2.1 三字段外，透传 plan_path / active_goal
+       *   - plan_path：event / goal / schedule / idle 四色徽章
+       *   - active_goal：goal 路径下气泡 / 徽章展示 title（priority 仅供 tooltip，可省）
+       *   - 其余 meta 字段（plan / memory_summary 等）继续由 /api/engine/ticks 按需拉取，保持 meta_summary ≤ 4KB
+       */
       meta_summary: {
         latest_say: m?.latest_say ?? null,
         latest_action: m?.latest_action ?? null,
         emotion: m?.emotion ?? null,
+        plan_path: m?.plan_path ?? null,
+        active_goal: m?.active_goal ?? null,
       },
     });
   }

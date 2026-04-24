@@ -59,6 +59,7 @@ import {
   fallbackPosition,
   snapTo,
 } from '../utils/sandbox'
+import { extractPlanFromMeta } from '../utils/planPath'
 
 /** 画布视口尺寸（DOM 像素，Phaser Game 的 width/height） */
 const VIEWPORT_W = 800
@@ -445,6 +446,8 @@ function applyWsNpcUpdated(msg: WsTickNpcUpdatedMsg) {
     latest_action:
       metaSummary && typeof metaSummary.latest_action === 'string' ? metaSummary.latest_action : null,
     emotion: metaSummary && typeof metaSummary.emotion === 'string' ? metaSummary.emotion : null,
+    /** [M4.5.1.c] plan_path / goal_title 统一由纯函数 extractPlanFromMeta 归一化（老后端降级返回 null） */
+    ...extractPlanFromMeta(metaSummary),
   }
   if (status === 'skipped') entry.note = '超预算，跳过'
   else if (status === 'error') entry.note = '执行出错'

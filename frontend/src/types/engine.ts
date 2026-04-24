@@ -54,7 +54,18 @@ export interface WsTickNpcUpdatedMsg extends WsBaseMsg {
   duration_ms?: number
   tokens?: { prompt: number; completion: number; total: number }
   cost_usd?: number | null
-  meta_summary?: { latest_say: string | null; latest_action: string | null; emotion: string | null }
+  /**
+   * [M4.5.1.c] meta_summary 扩 `plan_path` / `active_goal`，时间线徽章消费
+   *   - plan_path：`'event' | 'goal' | 'schedule' | 'idle' | null`，null 表示老后端/降级
+   *   - active_goal：仅 `plan_path==='goal'` 时非空，供气泡/徽章渲染 title
+   */
+  meta_summary?: {
+    latest_say: string | null
+    latest_action: string | null
+    emotion: string | null
+    plan_path?: 'event' | 'goal' | 'schedule' | 'idle' | null
+    active_goal?: { id: number; title: string; priority: number } | null
+  }
 }
 export interface WsTickEndMsg extends WsBaseMsg {
   type: 'tick.end'

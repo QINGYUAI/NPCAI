@@ -23,6 +23,14 @@ export interface TimelineNpcEntry {
   note?: string
   /** [M4.3.0] tick 级 trace_id；调试抽屉里以 T:<short> 形式展示（默认隐藏） */
   trace_id?: string | null
+  /**
+   * [M4.5.1.c] plan 节点四路决策，供时间线徽章展示
+   *   - 'event' 紫 / 'goal' 橙 / 'schedule' 青 / 'idle' 灰
+   *   - null / undefined（老后端 / 降级）→ 不渲染徽章
+   */
+  plan_path?: 'event' | 'goal' | 'schedule' | 'idle' | null
+  /** [M4.5.1.c] 仅 plan_path='goal' 时的目标 title，徽章后缀显示首 8 字 */
+  goal_title?: string | null
 }
 
 export interface TimelineTickRow {

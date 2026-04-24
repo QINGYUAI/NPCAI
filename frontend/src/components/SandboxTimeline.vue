@@ -7,6 +7,7 @@
  */
 import { computed, ref } from 'vue'
 import type { TimelineTickRow } from '../types/timeline'
+import { PLAN_PATH_STYLE, planPathBadgeText } from '../utils/planPath'
 
 const props = defineProps<{
   entries: TimelineTickRow[]
@@ -74,6 +75,13 @@ function statusColor(s: 'success' | 'error' | 'skipped'): string {
   return s === 'success' ? '#3fb950' : s === 'skipped' ? '#d29922' : '#f85149'
 }
 
+/**
+ * [M4.5.1.c] plan_path 四色徽章
+ *   - 样式 / 文案由 utils/planPath.ts 纯函数提供，便于单测与复用
+ *   - event=紫（响应式） / goal=橙（主动覆盖） / schedule=青（日程） / idle=灰（无任务）
+ */
+const PATH_STYLE = PLAN_PATH_STYLE
+
 /** 按最新在上排列（父组件 push 到末尾，这里倒序渲染） */
 const ordered = computed<TimelineTickRow[]>(() => [...props.entries].reverse())
 </script>
@@ -109,6 +117,14 @@ const ordered = computed<TimelineTickRow[]>(() => [...props.entries].reverse())
             <li v-for="(n, i) in row.npcs" :key="`${row.tick}-${n.npc_id}-${i}`" class="npc-row">
               <span class="npc-status" :style="{ color: statusColor(n.status) }">{{ statusIcon(n.status) }}</span>
               <span class="npc-name">{{ n.npc_name || `NPC#${n.npc_id}` }}</span>
+              <!-- [M4.5.1.c] plan_path 四色徽章：null/undefined 不渲染（老后端降级兼容） -->
+              <span
+                v-if="n.plan_path"
+                class="npc-plan-path"
+                :data-plan-path="n.plan_path"
+                :style="{ background: PATH_STYLE[n.plan_path].bg, color: PATH_STYLE[n.plan_path].fg }"
+                :title="`plan_path=${n.plan_path}${n.goal_title ? ` · ${n.goal_title}` : ''}`"
+              >{{ planPathBadgeText(n.plan_path, n.goal_title) }}</span>
               <span v-if="n.duration_ms != null" class="npc-dur">{{ n.duration_ms }}ms</span>
               <span v-if="n.prompt_tokens != null || n.completion_tokens != null" class="npc-tokens">
                 {{ n.prompt_tokens ?? '?' }}→{{ n.completion_tokens ?? '?' }}
@@ -148,6 +164,13 @@ const ordered = computed<TimelineTickRow[]>(() => [...props.entries].reverse())
           <li v-for="(n, i) in row.npcs" :key="`${row.tick}-${n.npc_id}-${i}`" class="npc-row">
             <span class="npc-status" :style="{ color: statusColor(n.status) }">{{ statusIcon(n.status) }}</span>
             <span class="npc-name">{{ n.npc_name || `NPC#${n.npc_id}` }}</span>
+            <span
+              v-if="n.plan_path"
+              class="npc-plan-path"
+              :data-plan-path="n.plan_path"
+              :style="{ background: PATH_STYLE[n.plan_path].bg, color: PATH_STYLE[n.plan_path].fg }"
+              :title="`plan_path=${n.plan_path}${n.goal_title ? ` · ${n.goal_title}` : ''}`"
+            >{{ planPathBadgeText(n.plan_path, n.goal_title) }}</span>
             <span v-if="n.duration_ms != null" class="npc-dur">{{ n.duration_ms }}ms</span>
             <span v-if="n.prompt_tokens != null || n.completion_tokens != null" class="npc-tokens">
               {{ n.prompt_tokens ?? '?' }}→{{ n.completion_tokens ?? '?' }}
@@ -255,6 +278,19 @@ const ordered = computed<TimelineTickRow[]>(() => [...props.entries].reverse())
 .npc-status { font-weight: 700; min-width: 14px; display: inline-block; }
 .npc-name { color: #f0f6fc; font-weight: 500; }
 .npc-dur, .npc-tokens, .npc-cost { color: var(--ainpc-muted); }
+/* [M4.5.1.c] plan_path 徽章 */
+.npc-plan-path {
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .npc-say {
   flex-basis: 100%;
   margin-left: 20px;
