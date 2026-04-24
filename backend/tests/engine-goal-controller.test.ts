@@ -108,6 +108,41 @@ describe('[M4.5.1.a] POST /api/engine/goals', () => {
     expect(r.body.error).toBe('INVALID_PARAM');
   });
 
+  /** [M4.5.observe] N-5 边界加固：下界 0 / 上界 11 / 负数 / 小数 / 字符串 都应 400，防止 clamp 层被误用 */
+  it('[N-5] priority=0 → 400', async () => {
+    const r = await request(app).post('/api/engine/goals').send({ npc_id: 1, title: 'ok', priority: 0 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
+  });
+  it('[N-5] priority=11 → 400', async () => {
+    const r = await request(app).post('/api/engine/goals').send({ npc_id: 1, title: 'ok', priority: 11 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
+  });
+  it('[N-5] priority=-1 → 400', async () => {
+    const r = await request(app).post('/api/engine/goals').send({ npc_id: 1, title: 'ok', priority: -1 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
+  });
+  it('[N-5] priority=1.5 小数 → 400', async () => {
+    const r = await request(app).post('/api/engine/goals').send({ npc_id: 1, title: 'ok', priority: 1.5 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
+  });
+  it('[N-5] priority="abc" 非数字 → 400', async () => {
+    const r = await request(app).post('/api/engine/goals').send({ npc_id: 1, title: 'ok', priority: 'abc' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
+  });
+  it('[N-5] priority=1 / 10 边界合法值 → 200', async () => {
+    setupCreateFlow(78);
+    const r1 = await request(app).post('/api/engine/goals').send({ npc_id: 1, title: 'ok', priority: 1 });
+    expect(r1.status).toBe(200);
+    setupCreateFlow(79);
+    const r10 = await request(app).post('/api/engine/goals').send({ npc_id: 1, title: 'ok', priority: 10 });
+    expect(r10.status).toBe(200);
+  });
+
   it('NPC 不存在 → 404 NPC_NOT_FOUND', async () => {
     poolQueryMock.mockResolvedValueOnce([[], null]); // SELECT npc → empty
     const r = await request(app).post('/api/engine/goals').send({ npc_id: 999, title: 'ok' });
@@ -155,6 +190,28 @@ describe('[M4.5.1.a] PATCH /api/engine/goals/:id', () => {
     const r = await request(app).patch('/api/engine/goals/999').send({ priority: 9 });
     expect(r.status).toBe(404);
     expect(r.body.error).toBe('GOAL_NOT_FOUND');
+  });
+
+  /** [M4.5.observe] N-5 PATCH 侧 priority 边界对称覆盖（与 POST 保持一致的拒绝策略） */
+  it('[N-5] PATCH priority=0 → 400', async () => {
+    const r = await request(app).patch('/api/engine/goals/77').send({ priority: 0 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
+  });
+  it('[N-5] PATCH priority=11 → 400', async () => {
+    const r = await request(app).patch('/api/engine/goals/77').send({ priority: 11 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
+  });
+  it('[N-5] PATCH priority=-5 → 400', async () => {
+    const r = await request(app).patch('/api/engine/goals/77').send({ priority: -5 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
+  });
+  it('[N-5] PATCH priority=2.3 小数 → 400', async () => {
+    const r = await request(app).patch('/api/engine/goals/77').send({ priority: 2.3 });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('INVALID_PARAM');
   });
 });
 
