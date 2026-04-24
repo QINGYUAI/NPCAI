@@ -23,6 +23,12 @@ const DEFAULTS = {
   REFLECT_EVERY_N_TICK: '5',
   /** [M4.2.3] 反思输入：从 npc_memory 按 created_at DESC 取最近 K 条（全 type） */
   REFLECT_RECENT_MEMORY_K: '20',
+  /**
+   * [M4.5.0 U-B] 记忆时间感：
+   *   - true  = reflect 节点在 system prompt 追加【当前时段】一行，storeMemory 写入 npc_memory.slot_hour
+   *   - false = 两处均跳过；列仍允许存在但写 NULL，完全回退 M4.4 行为
+   */
+  MEMORY_SLOT_HOUR_ENABLED: 'true',
   /** sync = 同步双写（拉票 Q3 a，默认）；async = fire-and-forget 留给 M4.2.5 */
   MEMORY_STORE_MODE: 'sync',
   /** 拉票 Q1 = a：prevSummary + 同场 NPC 名 */
@@ -74,6 +80,8 @@ export interface MemoryConfig {
     /** 反思参考的最近 K 条 memory */
     recentMemoryK: number;
   };
+  /** [M4.5.0 U-B] 记忆时间感总开关；false 时 reflect prompt / slot_hour 列均跳过 */
+  slotHourEnabled: boolean;
   /**
    * [M4.2.2.c] Y2 指针式 embedding：ai_config 表的 id；0 = 禁用（fallback 到 chat aiCfg）
    */
@@ -153,6 +161,7 @@ export function getMemoryConfig(): MemoryConfig {
       everyNTick: reflectEveryN,
       recentMemoryK: reflectRecentK,
     },
+    slotHourEnabled: readBool('MEMORY_SLOT_HOUR_ENABLED'),
   };
   return cached;
 }

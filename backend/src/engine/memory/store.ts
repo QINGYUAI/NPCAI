@@ -40,6 +40,13 @@ export interface StoreInput {
    *   - 手动调用 storeMemory（测试 / 未来 M4.3.1）可传自定义 uuid 或 null
    */
   traceId?: string | null;
+  /**
+   * [M4.5.0 U-B] 本条记忆产生时 NPC 所处的时段 hour（0..23，已考虑 soft window）
+   *   - 由 scheduler 经 graph/build.ts 透传
+   *   - MEMORY_SLOT_HOUR_ENABLED=false 或 slotHour 越界 → 写 NULL
+   *   - 用途：后续 RAG 可按时段过滤记忆（"我昨天下午 3 点做过什么"）
+   */
+  slotHour?: number | null;
 }
 
 const MIN_CONTENT_LEN = 5;
@@ -85,12 +92,34 @@ export async function storeMemory(input: StoreInput): Promise<StoreResult> {
   /** Step 1：MySQL INSERT with embed_status='pending'，拿到 id */
   let rowId: number;
   const traceId = input.traceId ?? null;
+  /**
+   * [M4.5.0 U-B] slot_hour 写入规则：
+   *   - cfg.slotHourEnabled=false → 恒 NULL（回退 M4.4 行为）
+   *   - slotHour 非 [0,23] 整数 → NULL（降级保守，不阻写入）
+   */
+  const slotHour =
+    cfg.slotHourEnabled &&
+    typeof input.slotHour === 'number' &&
+    Number.isInteger(input.slotHour) &&
+    input.slotHour >= 0 &&
+    input.slotHour <= 23
+      ? input.slotHour
+      : null;
   try {
     const [res] = await pool.execute<ResultSetHeader>(
       `INSERT INTO npc_memory
-         (npc_id, scene_id, tick, type, content, importance, embed_status, embed_model, trace_id)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?)`,
-      [input.npc.id, input.scene.id, input.tick, input.type, content, importance, traceId],
+         (npc_id, scene_id, tick, type, content, importance, embed_status, embed_model, trace_id, slot_hour)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)`,
+      [
+        input.npc.id,
+        input.scene.id,
+        input.tick,
+        input.type,
+        content,
+        importance,
+        traceId,
+        slotHour,
+      ],
     );
     rowId = Number(res.insertId);
     if (!rowId) throw new Error('INSERT 返回 insertId=0');

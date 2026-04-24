@@ -68,6 +68,22 @@ export interface ReflectInput {
    *   · chatCompletion 的 LogContext → ai_call_log.trace_id
    */
   traceId?: string | null;
+  /**
+   * [M4.5.0 U-B] 当前时段 hour（0..23，已考虑 soft window）
+   *   - 反哺 storeMemory 时透传 slotHour：让反思衍生的 npc_memory 也带时段标签
+   *   - buildReflectionPrompt 的 currentSlot.hour 亦使用此值
+   */
+  slotHour?: number | null;
+  /**
+   * [M4.5.0 U-B] 当前时段对应的日程条目（来自 scheduler.tick 预解析）
+   *   - 用于 buildReflectionPrompt 的 currentSlot，让 reflect 对"当前做什么"有感
+   *   - null / undefined 时 prompt 不注入【当前时段】行（等价 M4.4 行为）
+   */
+  scheduledActivity?: {
+    activity: string;
+    location: string | null;
+    priority: number;
+  } | null;
 }
 
 const SKIPPED: ReflectionResult = {
@@ -164,6 +180,8 @@ export async function reflectIfTriggered(input: ReflectInput): Promise<Reflectio
         signal: input.signal,
         onMetrics: input.onMetrics,
         traceId: input.traceId ?? null,
+        /** [M4.5.0 U-B] 反思衍生的 memory 继承当前时段标签 */
+        slotHour: input.slotHour ?? null,
       });
       if (store.id) {
         await pool
@@ -198,12 +216,28 @@ async function generateReflection(
   input: ReflectInput,
   memories: MemoryEntry[],
 ): Promise<ReflectionResponse | null> {
+  /**
+   * [M4.5.0 U-B] currentSlot 组装规则：
+   *   - slotHour 必须为 0..23 有效值且 scheduledActivity 非空时才注入
+   *   - MEMORY_SLOT_HOUR_ENABLED=false 由 build.ts 上游不传 slotHour → 此处自动回退
+   */
+  const slotHour = input.slotHour;
+  const sched = input.scheduledActivity;
+  const currentSlot =
+    typeof slotHour === 'number' &&
+    Number.isInteger(slotHour) &&
+    slotHour >= 0 &&
+    slotHour <= 23 &&
+    sched?.activity
+      ? { hour: slotHour, activity: sched.activity, location: sched.location ?? null }
+      : null;
   const { system, user } = buildReflectionPrompt({
     scene: input.scene,
     npc: input.npc,
     prevSummary: input.prevSummary,
     memories,
     tick: input.tick,
+    currentSlot,
   });
 
   for (let attempt = 0; attempt < 2; attempt += 1) {

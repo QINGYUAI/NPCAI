@@ -80,15 +80,41 @@ export function buildReflectionPrompt(params: {
   prevSummary: string;
   memories: MemoryEntry[];
   tick: number;
+  /**
+   * [M4.5.0 U-B] 当前时段上下文：由 scheduler 经 runGraph 传入（已考虑 soft window）。
+   *   - 非空：在 system prompt 末尾注入「【当前时段】<hour>:00-<hour+1>:00 <activity>@<location>」
+   *     让 reflection 对"现在是什么时间在做什么"有感，输出自带时间感
+   *   - 为空：完全回退 M4.4 行为（兼容 MEMORY_SLOT_HOUR_ENABLED=false）
+   */
+  currentSlot?: {
+    hour: number;
+    activity: string;
+    location: string | null;
+  } | null;
 }): { system: string; user: string } {
-  const { scene, npc, prevSummary, memories, tick } = params;
+  const { scene, npc, prevSummary, memories, tick, currentSlot } = params;
+  let slotLine = '';
+  if (
+    currentSlot &&
+    typeof currentSlot.hour === 'number' &&
+    Number.isInteger(currentSlot.hour) &&
+    currentSlot.hour >= 0 &&
+    currentSlot.hour <= 23 &&
+    currentSlot.activity &&
+    currentSlot.activity.trim().length > 0
+  ) {
+    const h = String(currentSlot.hour).padStart(2, '0');
+    const next = String((currentSlot.hour + 1) % 24).padStart(2, '0');
+    const loc = currentSlot.location?.trim() ? ` @ ${currentSlot.location.trim()}` : '';
+    slotLine = `\n\n【当前时段】${h}:00-${next}:00 ${currentSlot.activity.trim()}${loc}`;
+  }
   const system = `${SYSTEM_PREFIX}
 【角色设定】
 ${npc.system_prompt || `你的名字是「${npc.name}」。`}
 
 【性格】${npc.personality || '未特别指定'}
 
-【当前任务】基于最近记忆对自己做一次"反思"：抽象出当前的目标 / 情绪 / 关系三条独立洞察。`;
+【当前任务】基于最近记忆对自己做一次"反思"：抽象出当前的目标 / 情绪 / 关系三条独立洞察。${slotLine}`;
 
   const user = `【场景】${scene.name}${scene.description ? `（${scene.description}）` : ''}
 【当前 tick】${tick}

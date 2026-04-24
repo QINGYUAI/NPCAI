@@ -24,6 +24,8 @@ import { generateTraceId } from './trace.js';
 import { getScheduleConfig } from './schedule/config.js';
 import { fetchScheduleForNpc } from './schedule/fetch.js';
 import { resolveScheduledActivity } from './schedule/resolve.js';
+import { resolveEffectiveHourFromClock } from './schedule/softWindow.js';
+import { getMemoryConfig } from './memory/config.js';
 import type {
   EngineConfig,
   EngineStatus,
@@ -310,10 +312,25 @@ export class SceneScheduler {
      *   - N=2 NPC 每 tick 2 次单行查；N 大时可后续批量化，.a 批次保持最小改动
      */
     const scheduleCfg = getScheduleConfig();
+    const memoryCfg = getMemoryConfig();
+    /**
+     * [M4.5.0 U-N] effectiveHour = computeEffectiveHour(hour, minute, windowMin)
+     *   - SIM_CLOCK_HOUR / SIM_CLOCK_MINUTE 用于单测 / 演示注入；非法值回退系统时钟
+     *   - windowMin = 0 时行为与 M4.4.1.a 完全一致（整点硬切）
+     *   - 所有下游（plan scheduledActivity + memory slot_hour + reflect currentSlot）统一用 effectiveHour
+     *     → 保证"差 5 分钟 18:00 的一次 tick 的 plan / memory / reflect 三处时段对齐"
+     */
     const simHourEnv = process.env.SIM_CLOCK_HOUR;
     const simHour = simHourEnv != null ? Number.parseInt(simHourEnv, 10) : NaN;
-    const currentHour =
-      Number.isInteger(simHour) && simHour >= 0 && simHour <= 23 ? simHour : new Date().getHours();
+    const simMinEnv = process.env.SIM_CLOCK_MINUTE;
+    const simMin = simMinEnv != null ? Number.parseInt(simMinEnv, 10) : NaN;
+    const currentHour = resolveEffectiveHourFromClock({
+      overrideHour: Number.isInteger(simHour) && simHour >= 0 && simHour <= 23 ? simHour : null,
+      overrideMinute: Number.isInteger(simMin) && simMin >= 0 && simMin <= 59 ? simMin : null,
+      windowMin: scheduleCfg.softWindowMin,
+    });
+    /** MEMORY_SLOT_HOUR_ENABLED=false 时：下游 slot_hour/reflect.currentSlot 恒 null（回退 M4.4） */
+    const slotHourForGraph = memoryCfg.slotHourEnabled ? currentHour : null;
     let echoParentMap: Map<number, EchoChainNode> | undefined;
     if (echoMaxTurn > 0 && sceneEvents.length > 0) {
       try {
@@ -409,6 +426,8 @@ export class SceneScheduler {
           traceId,
           /** [M4.4.1.a] 当前 hour 的日程条目；.a 批次仅透传，.b 批次 plan 前置分支消费 */
           scheduledActivity,
+          /** [M4.5.0 U-B] 当前时段 hour（含 soft window）；MEMORY_SLOT_HOUR_ENABLED=false 时为 null */
+          currentSlotHour: slotHourForGraph,
         });
         this.costUsdTotal += result.cost_usd || 0;
         /** [M4.2.1.a] 记录真实 tokens 供下一 tick budget 判定；dry_run 仍为 0 */

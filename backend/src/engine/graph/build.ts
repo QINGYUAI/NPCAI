@@ -66,6 +66,12 @@ export interface GraphInput {
     location: string | null;
     priority: number;
   } | null;
+  /**
+   * [M4.5.0 U-B] 当前 NPC 所处的时段 hour（0..23，已由 scheduler 经 soft window 计算）
+   *   - 透传给 storeMemory(slot_hour) 与 reflect(currentSlot.hour)
+   *   - null/undefined 时全链路写 NULL，等价 M4.4 行为（MEMORY_SLOT_HOUR_ENABLED=false 路径）
+   */
+  currentSlotHour?: number | null;
 }
 
 export interface GraphOutput {
@@ -256,6 +262,8 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
       signal,
       onMetrics,
       traceId,
+      /** [M4.5.0 U-B] 观察型记忆继承当前时段标签 */
+      slotHour: input.currentSlotHour ?? null,
     });
   }
   if (speakResult.latest_say) {
@@ -269,6 +277,8 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
       signal,
       onMetrics,
       traceId,
+      /** [M4.5.0 U-B] 对话型记忆继承当前时段标签 */
+      slotHour: input.currentSlotHour ?? null,
     });
 
     /**
@@ -334,6 +344,9 @@ export async function runGraph(input: GraphInput): Promise<GraphOutput> {
     signal,
     onMetrics,
     traceId,
+    /** [M4.5.0 U-B] 让反思自带时间感：prompt 注入【当前时段】+ 衍生 memory 继承 slot_hour */
+    slotHour: input.currentSlotHour ?? null,
+    scheduledActivity: input.scheduledActivity ?? null,
   });
 
   const nextMeta: SimulationMetaV1 = {
