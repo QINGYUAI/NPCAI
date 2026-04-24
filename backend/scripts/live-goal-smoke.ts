@@ -185,12 +185,19 @@ async function main() {
     base: args.base,
   });
 
-  /** 前置 1：后端存活 */
+  /** 前置 1：后端存活（顺便拿到 scene 的 engine 状态） */
+  let initialRunning = false;
   try {
-    const h = await api<{ status: string }>(args.base, 'GET', '/api/engine/status');
+    const h = await api<{ data?: { running?: boolean } }>(
+      args.base,
+      'GET',
+      `/api/engine/status?scene_id=${args.scene}`,
+    );
     if (h.status >= 500) throw new Error(`status=${h.status}`);
+    if (h.status === 400) throw new Error(`scene=${args.scene} 不存在或参数非法`);
+    initialRunning = (h.body as { data?: { running?: boolean } }).data?.running ?? false;
   } catch (e) {
-    console.error(`✗ 后端不可达：${args.base}（${(e as Error).message}）`);
+    console.error(`✗ 后端不可达或 scene 非法：${args.base}（${(e as Error).message}）`);
     process.exit(2);
   }
 
@@ -209,10 +216,8 @@ async function main() {
   const baselineId = await fetchBaselineTickId(args.npc);
   console.log(`baseline npc_tick_log.id = ${baselineId}`);
 
-  /** 1) 确保 engine 启动 */
-  const s0 = await api<{ data?: { running?: boolean } }>(args.base, 'GET', '/api/engine/status');
-  const running = (s0.body as { data?: { running?: boolean } }).data?.running ?? false;
-  if (!running) {
+  /** 1) 确保 engine 启动（复用前置里拿到的 initialRunning） */
+  if (!initialRunning) {
     console.log('启动 engine...');
     const startRes = await api(args.base, 'POST', '/api/engine/start', {
       scene_id: args.scene,
@@ -329,8 +334,8 @@ async function cleanup(args: Args, goalId: number | null) {
       console.log(`cleanup: DELETE goal#${goalId} → ${r.status}`);
     }
     if (!args.keepEngine) {
-      const r = await api(args.base, 'POST', '/api/engine/stop');
-      console.log(`cleanup: engine stop → ${r.status}`);
+      const r = await api(args.base, 'POST', '/api/engine/stop', { scene_id: args.scene });
+      console.log(`cleanup: engine stop scene=${args.scene} → ${r.status}`);
     }
   } catch (e) {
     console.warn('cleanup 失败（忽略）:', (e as Error).message);
