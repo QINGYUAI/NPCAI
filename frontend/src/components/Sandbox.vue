@@ -5,9 +5,8 @@
  * - 将 NPC 以圆形节点渲染到画布，可拖拽调整位置
  * - 点击「保存布局」写入 scene_npc.pos_x/pos_y
  */
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { toast } from 'vue3-toastify'
-import * as Phaser from 'phaser'
 import { ElMessageBox } from 'element-plus'
 import {
   getSceneList,
@@ -49,27 +48,16 @@ import SandboxTimeline from './SandboxTimeline.vue'
 import SandboxReflections from './SandboxReflections.vue'
 import SandboxEvents from './SandboxEvents.vue'
 import SandboxEventInjectorDialog from './SandboxEventInjectorDialog.vue'
+import SandboxMap from './SandboxMap.vue'
 import { NPC_CATEGORIES } from '../constants/npc'
-import { resolveAvatarUrl } from '../utils/avatar'
-import {
-  categoryCss,
-  clamp,
-  colorOfCategory,
-  extractBubbleText,
-  fallbackPosition,
-  snapTo,
-} from '../utils/sandbox'
+import { categoryCss, fallbackPosition } from '../utils/sandbox'
 import { extractPlanFromMeta } from '../utils/planPath'
 
 /** 画布视口尺寸（DOM 像素，Phaser Game 的 width/height） */
 const VIEWPORT_W = 800
 const VIEWPORT_H = 600
-/** NPC 节点半径（世界坐标） */
+/** NPC 节点半径（世界坐标），与子组件 SandboxMap 一致 */
 const NODE_R = 26
-/** 缩放范围 */
-const MIN_ZOOM = 0.25
-const MAX_ZOOM = 2.5
-
 /** 顶层状态 */
 const scenes = ref<Scene[]>([])
 const activeSceneId = ref<number | null>(null)
@@ -499,8 +487,51 @@ const ctxMenu = ref<{ visible: boolean; x: number; y: number; npc: SceneNpcLink 
   npc: null,
 })
 
-/** 右键菜单触发后，抑制相机 pan，直到 pointerup */
-let rightDownOnNode = false
+/**
+ * [M4.6.0·批次B-2] Phaser 画布由 SandboxMap 托管；父组件仅保留缩放数字 / dirty / 右键菜单。
+ *
+ * defineExpose 的命令式 API（与 SandboxMap.vue 同步）
+ */
+type SandboxMapExpose = {
+  getPositions: () => Array<{ npc_id: number; pos_x: number; pos_y: number }>
+  setZoom: (z: number) => void
+  zoomIn: () => void
+  zoomOut: () => void
+  zoomFit: () => void
+  refreshBubbles: () => void
+  resetLayout: () => void
+}
+const mapRef = ref<SandboxMapExpose | null>(null)
+
+/** 与 SandboxMap 相机同步（按钮展示缩放百分比） */
+const zoomLevel = ref(1)
+
+function onMapPositionChanged() {
+  dirty.value = true
+}
+
+function onMapNpcRightClick(payload: { npc: SceneNpcLink; x: number; y: number }) {
+  ctxMenu.value = {
+    visible: true,
+    x: payload.x,
+    y: payload.y,
+    npc: payload.npc,
+  }
+}
+
+function onMapZoomChange(z: number) {
+  zoomLevel.value = z
+}
+
+function zoomIn() {
+  mapRef.value?.zoomIn()
+}
+function zoomOut() {
+  mapRef.value?.zoomOut()
+}
+function zoomFit() {
+  mapRef.value?.zoomFit()
+}
 
 /** 备注编辑对话框 */
 const roleDialog = ref<{ visible: boolean; npc: SceneNpcLink | null; text: string; saving: boolean }>({
@@ -524,13 +555,6 @@ const metaDialog = ref<{
   error: '',
   saving: false,
 })
-
-/** Phaser 实例（shallowRef：避免 Vue 代理干扰 Phaser 内部对象） */
-const gameRef = shallowRef<Phaser.Game | null>(null)
-const sceneRef = shallowRef<Phaser.Scene | null>(null)
-/** 当前节点坐标缓存：npc_id → {x,y} */
-const positionCache = shallowRef<Map<number, { x: number; y: number }>>(new Map())
-const containerEl = ref<HTMLDivElement | null>(null)
 
 const activeScene = computed<Scene | null>(
   () => scenes.value.find((s) => s.id === activeSceneId.value) ?? null,
@@ -560,47 +584,6 @@ function worldSize(d: SceneDetail | null): { w: number; h: number } {
   return { w, h }
 }
 
-/** 销毁当前 Phaser 实例（切换场景或卸载组件时） */
-function destroyGame() {
-  if (gameRef.value) {
-    gameRef.value.destroy(true)
-    gameRef.value = null
-    sceneRef.value = null
-  }
-  positionCache.value = new Map()
-  nodeHandles.value = new Map()
-}
-
-/** 在指定节点上方渲染/更新气泡；空文本则移除气泡 */
-function renderBubble(scene: Phaser.Scene, handle: NodeHandle, text: string) {
-  if (!text) {
-    if (handle.bubble) {
-      handle.bubble.destroy(true)
-      handle.bubble = null
-    }
-    return
-  }
-  if (handle.bubble) handle.bubble.destroy(true)
-
-  const maxWidth = 180
-  const label = scene.add.text(0, 0, text, {
-    fontFamily: 'system-ui, -apple-system, sans-serif',
-    fontSize: '12px',
-    color: '#0d1117',
-    backgroundColor: '#e6edf3',
-    padding: { x: 6, y: 4 },
-    wordWrap: { width: maxWidth, useAdvancedWrap: true },
-    align: 'center',
-  })
-  label.setOrigin(0.5, 1)
-  label.setPosition(0, -NODE_R - 6)
-
-  const bubble = scene.add.container(0, 0, [label])
-  bubble.setDepth(20)
-  handle.container.add(bubble)
-  handle.bubble = bubble
-}
-
 /**
  * [M4.3.1.c] 根据 ring buffer 查某 NPC 最新 dialogue event 的回复对象
  *   - 约束：只查 actor === npcName 的最新一条 dialogue；取其 parent_event_id 指向的 entry.actor
@@ -619,35 +602,9 @@ function findReplyToActor(npcName: string | null | undefined): string | null {
   return null
 }
 
-/** 刷新所有节点气泡（基于最新 detail.npcs 的 simulation_meta） */
+/** 刷新所有节点气泡：委派给 SandboxMap（读取 props.detail 内最新 simulation_meta） */
 function refreshBubbles() {
-  if (!detail.value || !sceneRef.value) return
-  const scene = sceneRef.value
-  for (const n of detail.value.npcs) {
-    const h = nodeHandles.value.get(n.npc_id)
-    if (!h) continue
-    /** [M4.3.1.c] 气泡加「💬 回应 <actor>」后缀：从 ring buffer 回查最新 dialogue 的 parent.actor */
-    const replyTo = bubbleEnabled.value ? findReplyToActor(n.npc_name) : null
-    /** [M4.4.1.b] 闲时回退：无 say/action 时展示当前小时日程；scheduled_activity 由后端 runGraph 写入 simulation_meta */
-    const sched =
-      bubbleEnabled.value && n.simulation_meta
-        ? (n.simulation_meta as Record<string, unknown>).scheduled_activity ?? null
-        : null
-    /** [M4.5.1.b] 动态目标回退（优先级高于 schedule）：后端 plan_path='goal' 时 meta.active_goal 非空 */
-    const goal =
-      bubbleEnabled.value && n.simulation_meta
-        ? (n.simulation_meta as Record<string, unknown>).active_goal ?? null
-        : null
-    const text = bubbleEnabled.value
-      ? extractBubbleText(
-          n.simulation_meta,
-          replyTo,
-          sched as Parameters<typeof extractBubbleText>[2],
-          goal as Parameters<typeof extractBubbleText>[3],
-        )
-      : ''
-    renderBubble(scene, h, text)
-  }
+  mapRef.value?.refreshBubbles()
 }
 
 /** 轮询：重新拉取场景详情，只更新 simulation_meta 并刷新气泡（不动节点位置） */
@@ -895,308 +852,8 @@ const canvasWrapStyle = computed(() => ({
   height: VIEWPORT_H + 'px',
 }))
 
-/** 当前 world 尺寸（随场景变化） */
-const worldW = ref(800)
-const worldH = ref(600)
-const zoomLevel = ref(1)
-
-/** 创建 Phaser Game 并加载当前 detail */
-function createGame(d: SceneDetail) {
-  if (!containerEl.value) return
-  destroyGame()
-
-  const ws = worldSize(d)
-  worldW.value = ws.w
-  worldH.value = ws.h
-
-  /** 使用闭包内的自定义 Scene：保持 Phaser 生命周期内访问 Vue 数据 */
-  class SandboxScene extends Phaser.Scene {
-    constructor() {
-      super('sandbox')
-    }
-
-    preload() {
-      /** 允许远程图片作为纹理（需服务端 CORS 支持；失败会进入 loaderror） */
-      this.load.crossOrigin = 'anonymous'
-      if (d.background_image) {
-        this.load.image('bg', d.background_image)
-      }
-      for (const n of d.npcs ?? []) {
-        if (n.npc_avatar) {
-          const url = resolveAvatarUrl(n.npc_avatar)
-          if (url) this.load.image(avatarKey(n.npc_id), url)
-        }
-      }
-      this.load.on('loaderror', (file: Phaser.Loader.File) => {
-        console.warn('[Sandbox] 资源加载失败:', file.key, file.src)
-      })
-    }
-
-    create() {
-      sceneRef.value = this
-      const W = ws.w
-      const H = ws.h
-
-      /** 背景层 */
-      if (d.background_image && this.textures.exists('bg')) {
-        const bg = this.add.image(W / 2, H / 2, 'bg')
-        const scale = Math.max(W / bg.width, H / bg.height)
-        bg.setScale(scale).setDepth(0)
-      } else {
-        const g = this.add.graphics()
-        g.fillStyle(0x0d1117, 1)
-        g.fillRect(0, 0, W, H)
-        g.lineStyle(1, 0x30363d, 0.6)
-        for (let x = 0; x <= W; x += 40) {
-          g.beginPath()
-          g.moveTo(x, 0)
-          g.lineTo(x, H)
-          g.strokePath()
-        }
-        for (let y = 0; y <= H; y += 40) {
-          g.beginPath()
-          g.moveTo(0, y)
-          g.lineTo(W, y)
-          g.strokePath()
-        }
-        g.setDepth(0)
-      }
-
-      /** 世界边界提示 */
-      const border = this.add.graphics()
-      border.lineStyle(1, 0x58a6ff, 0.6)
-      border.strokeRect(0.5, 0.5, W - 1, H - 1)
-      border.setDepth(100)
-
-      /** 绘制 NPC 节点 */
-      const npcs = d.npcs ?? []
-      const cache = new Map<number, { x: number; y: number }>()
-      const handles = new Map<number, NodeHandle>()
-      npcs.forEach((n, idx) => {
-        let x: number
-        let y: number
-        if (typeof n.pos_x === 'number' && typeof n.pos_y === 'number') {
-          x = clamp(Number(n.pos_x), NODE_R, W - NODE_R)
-          y = clamp(Number(n.pos_y), NODE_R, H - NODE_R)
-        } else {
-          const fb = fallbackPosition(idx, npcs.length, W, H)
-          x = fb.x
-          y = fb.y
-        }
-        cache.set(n.npc_id, { x, y })
-        const h = createNpcNode(this, n, x, y, W, H)
-        handles.set(n.npc_id, h)
-      })
-      positionCache.value = cache
-      nodeHandles.value = handles
-
-      /** 相机：world bounds + 初始 fit */
-      const cam = this.cameras.main
-      cam.setBounds(0, 0, W, H)
-      const fitZoom = Math.min(VIEWPORT_W / W, VIEWPORT_H / H, 1)
-      cam.setZoom(Math.max(MIN_ZOOM, fitZoom))
-      zoomLevel.value = cam.zoom
-      cam.centerOn(W / 2, H / 2)
-
-      /** 滚轮缩放（以鼠标位置为缩放中心） */
-      this.input.on(
-        'wheel',
-        (
-          _pointer: Phaser.Input.Pointer,
-          _over: unknown,
-          _dx: number,
-          dy: number,
-        ) => {
-          const next = clamp(cam.zoom * (dy > 0 ? 0.9 : 1.1), MIN_ZOOM, MAX_ZOOM)
-          cam.setZoom(next)
-          zoomLevel.value = next
-        },
-      )
-
-      /** 右键/中键拖拽 pan：空白处拖拽平移；若起始于节点则抑制 */
-      this.input.on(
-        'pointermove',
-        (pointer: Phaser.Input.Pointer) => {
-          if (!pointer.isDown || rightDownOnNode) return
-          const rightOrMiddle = pointer.rightButtonDown() || pointer.buttons === 4
-          if (rightOrMiddle) {
-            cam.scrollX -= (pointer.x - pointer.prevPosition.x) / cam.zoom
-            cam.scrollY -= (pointer.y - pointer.prevPosition.y) / cam.zoom
-          }
-        },
-      )
-      this.input.on('pointerup', () => {
-        rightDownOnNode = false
-      })
-
-      /** 场景重建后：若气泡开启，立刻渲染一次当前 meta */
-      if (bubbleEnabled.value) refreshBubbles()
-    }
-  }
-
-  const game = new Phaser.Game({
-    type: Phaser.AUTO,
-    parent: containerEl.value,
-    width: VIEWPORT_W,
-    height: VIEWPORT_H,
-    backgroundColor: '#0d1117',
-    scene: SandboxScene,
-    audio: { noAudio: true },
-    disableContextMenu: true,
-  })
-  gameRef.value = game
-}
-
-/** 缩放控制：外部按钮调用 */
-function setZoom(z: number) {
-  const cam = sceneRef.value?.cameras.main
-  if (!cam) return
-  const clamped = clamp(z, MIN_ZOOM, MAX_ZOOM)
-  cam.setZoom(clamped)
-  zoomLevel.value = clamped
-}
-function zoomIn() {
-  setZoom((zoomLevel.value || 1) * 1.2)
-}
-function zoomOut() {
-  setZoom((zoomLevel.value || 1) / 1.2)
-}
-function zoomFit() {
-  const cam = sceneRef.value?.cameras.main
-  if (!cam) return
-  const z = Math.min(VIEWPORT_W / worldW.value, VIEWPORT_H / worldH.value, 1)
-  setZoom(Math.max(MIN_ZOOM, z))
-  cam.centerOn(worldW.value / 2, worldH.value / 2)
-}
-
-/** Phaser 头像纹理 key */
-function avatarKey(npcId: number) {
-  return `avatar-${npcId}`
-}
-
-/** 节点句柄：挂在 container.data 上，便于后续气泡刷新与重绘 */
-interface NodeHandle {
-  container: Phaser.GameObjects.Container
-  bubble: Phaser.GameObjects.Container | null
-  /** avatar 图像的几何遮罩（需跟随容器移动） */
-  maskShape: Phaser.GameObjects.Graphics | null
-}
-
-/** 每次 createGame 重建一次：npc_id → NodeHandle */
-const nodeHandles = shallowRef<Map<number, NodeHandle>>(new Map())
-
-/** 为单个 NPC 生成可拖拽的节点：头像优先、失败回退首字母 */
-function createNpcNode(
-  scene: Phaser.Scene,
-  npc: SceneNpcLink,
-  x: number,
-  y: number,
-  W: number,
-  H: number,
-): NodeHandle {
-  const color = colorOfCategory(npc.npc_category)
-  const key = avatarKey(npc.npc_id)
-  const hasAvatar = !!npc.npc_avatar && scene.textures.exists(key)
-
-  const container = scene.add.container(x, y)
-  container.setDepth(10)
-
-  /** 背景圆（分类色） */
-  const bg = scene.add.circle(0, 0, NODE_R, color, 0.9)
-  bg.setStrokeStyle(2, 0xffffff, 0.9)
-  container.add(bg)
-
-  /** 头像图像（圆形遮罩）或首字母降级 */
-  let maskShape: Phaser.GameObjects.Graphics | null = null
-  if (hasAvatar) {
-    const img = scene.add.image(0, 0, key)
-    /** cover 到节点内切圆（取图像短边等比缩放到直径） */
-    const imgD = NODE_R * 2 - 4
-    const ratio = Math.max(imgD / img.width, imgD / img.height)
-    img.setScale(ratio)
-    img.setOrigin(0.5)
-    /** 用独立 Graphics 作几何遮罩；遮罩内容画在 (0,0)，通过自身 x/y 跟随容器 */
-    maskShape = scene.make.graphics({}, false)
-    maskShape.fillStyle(0xffffff, 1)
-    maskShape.fillCircle(0, 0, NODE_R - 2)
-    maskShape.x = x
-    maskShape.y = y
-    img.setMask(maskShape.createGeometryMask())
-    container.add(img)
-  } else {
-    const initial = (npc.npc_name || '?').charAt(0).toUpperCase()
-    const text = scene.add.text(0, 0, initial, {
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-      fontSize: '18px',
-      color: '#ffffff',
-      fontStyle: 'bold',
-    })
-    text.setOrigin(0.5)
-    container.add(text)
-  }
-
-  /** 姓名标签（容器下方） */
-  const nameLabel = scene.add.text(0, NODE_R + 6, npc.npc_name || '未命名', {
-    fontFamily: 'system-ui, -apple-system, sans-serif',
-    fontSize: '12px',
-    color: '#f0f6fc',
-    backgroundColor: 'rgba(13,17,23,0.7)',
-    padding: { x: 4, y: 2 },
-  })
-  nameLabel.setOrigin(0.5, 0)
-  container.add(nameLabel)
-
-  /** 交互（圆形命中） */
-  container.setSize(NODE_R * 2, NODE_R * 2)
-  container.setInteractive(
-    new Phaser.Geom.Circle(0, 0, NODE_R),
-    Phaser.Geom.Circle.Contains,
-  )
-  scene.input.setDraggable(container)
-
-  container.on('pointerover', () => bg.setStrokeStyle(3, 0xffffff, 1))
-  container.on('pointerout', () => bg.setStrokeStyle(2, 0xffffff, 0.9))
-
-  /** 右键点击：弹出上下文菜单（并抑制相机 pan） */
-  container.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-    if (pointer.rightButtonDown()) {
-      rightDownOnNode = true
-      ctxMenu.value = {
-        visible: true,
-        x: pointer.x,
-        y: pointer.y,
-        npc,
-      }
-    }
-  })
-
-  container.on(
-    'drag',
-    (pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
-      /** 吸附：全局开关打开 或 按住 Shift 时启用；步长由 snapStep 控制 */
-      const rawEvent = pointer?.event as unknown as { shiftKey?: boolean } | undefined
-      const shift = !!rawEvent?.shiftKey
-      const doSnap = snapEnabled.value || shift
-      const sx = doSnap ? snapTo(dragX, snapStep.value) : dragX
-      const sy = doSnap ? snapTo(dragY, snapStep.value) : dragY
-      const nx = clamp(sx, NODE_R, W - NODE_R)
-      const ny = clamp(sy, NODE_R, H - NODE_R)
-      container.x = nx
-      container.y = ny
-      /** 同步遮罩位置（世界坐标），保证头像圆形裁剪跟随节点 */
-      if (maskShape) {
-        maskShape.x = nx
-        maskShape.y = ny
-      }
-      const map = new Map(positionCache.value)
-      map.set(npc.npc_id, { x: nx, y: ny })
-      positionCache.value = map
-      dirty.value = true
-    },
-  )
-
-  return { container, bubble: null, maskShape }
-}
+/** 页脚展示的当前世界尺寸（与 detail 一致；拖拽未保存时的画布偏移不计入此展示） */
+const worldDims = computed(() => worldSize(detail.value))
 
 /** 关闭右键菜单 */
 function closeCtxMenu() {
@@ -1351,7 +1008,7 @@ async function saveMeta() {
 /** 重置为后端保存的坐标（撤销未保存的拖动） */
 function resetLayout() {
   if (!detail.value) return
-  createGame(detail.value)
+  mapRef.value?.resetLayout()
   dirty.value = false
 }
 
@@ -1368,18 +1025,14 @@ function autoArrange() {
     }),
   }
   detail.value = cloned
-  createGame(cloned)
   dirty.value = true
+  /** SandboxMap：layoutRebuildKey 变更触发重建 */
 }
 
 /** 保存布局 */
 async function saveLayout() {
   if (!detail.value || !activeSceneId.value) return
-  const positions = Array.from(positionCache.value.entries()).map(([npc_id, p]) => ({
-    npc_id,
-    pos_x: p.x,
-    pos_y: p.y,
-  }))
+  const positions = mapRef.value?.getPositions() ?? []
   if (positions.length === 0) {
     toast.info('当前场景没有关联角色，请先在「场景」Tab 关联')
     return
@@ -1395,8 +1048,8 @@ async function saveLayout() {
         detail.value = {
           ...detail.value,
           npcs: detail.value.npcs.map((n) => {
-            const p = positionCache.value.get(n.npc_id)
-            return p ? { ...n, pos_x: p.x, pos_y: p.y } : n
+            const p = positions.find((x) => x.npc_id === n.npc_id)
+            return p ? { ...n, pos_x: p.pos_x, pos_y: p.pos_y } : n
           }),
         }
       }
@@ -1419,7 +1072,6 @@ async function loadSceneDetail(id: number) {
     const { data } = await getSceneById(id)
     if (data.code === 0 && data.data) {
       detail.value = data.data
-      createGame(data.data)
     } else {
       toast.error(data.message || '加载失败')
     }
@@ -1445,7 +1097,7 @@ watch(activeSceneId, (id) => {
       if (engineStatus.value?.running) startEngineObserver()
     })
   } else {
-    destroyGame()
+    detail.value = null
     stopEngineObserver()
     engineStatus.value = null
     lastShownMetaWarnAt = null
@@ -1470,7 +1122,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onWindowResize)
   stopBubbleTimer()
   stopEngineObserver()
-  destroyGame()
 })
 
 function categoryLabel(v: string | null | undefined) {
@@ -1655,7 +1306,21 @@ function categoryLabel(v: string | null | undefined) {
     <div v-else :class="viewportWide ? 'sandbox-layout-wide' : 'flex flex-col lg:flex-row gap-4'">
       <div :class="viewportWide ? 'sandbox-layout-left' : 'contents'">
       <div class="sandbox-canvas-wrap" :style="canvasWrapStyle" @click.capture="closeCtxMenu">
-        <div ref="containerEl" class="sandbox-canvas" />
+        <SandboxMap
+          ref="mapRef"
+          class="sandbox-canvas"
+          :detail="detail"
+          :bubble-enabled="bubbleEnabled"
+          :snap-enabled="snapEnabled"
+          :snap-step="snapStep"
+          :find-reply-to-actor="findReplyToActor"
+          :viewport-width="VIEWPORT_W"
+          :viewport-height="VIEWPORT_H"
+          :node-radius="NODE_R"
+          @position-changed="onMapPositionChanged"
+          @npc-right-click="onMapNpcRightClick"
+          @zoom-change="onMapZoomChange"
+        />
         <el-skeleton v-if="loading" :rows="8" animated class="sandbox-skeleton" />
 
         <!-- 节点右键菜单（位置相对画布容器，由 Phaser pointer 坐标给出） -->
@@ -1771,7 +1436,7 @@ function categoryLabel(v: string | null | undefined) {
     <p class="text-xs text-[var(--ainpc-muted)] mt-4">
       交互：<strong>左键</strong>拖拽节点（按 <kbd>Shift</kbd> 临时吸附）/ <strong>右键</strong>节点弹出菜单 /
       <strong>滚轮</strong>缩放 / <strong>右键拖拽空白处</strong>平移；点击「保存布局」将坐标写入
-      <code>scene_npc.pos_x / pos_y</code>。视口 {{ VIEWPORT_W }}×{{ VIEWPORT_H }}；当前世界 {{ worldW }}×{{ worldH }}。
+      <code>scene_npc.pos_x / pos_y</code>。视口 {{ VIEWPORT_W }}×{{ VIEWPORT_H }}；当前世界 {{ worldDims.w }}×{{ worldDims.h }}。
     </p>
     <p v-if="engineStatus" class="text-xs text-[var(--ainpc-muted)] mt-1">
       引擎：{{ engineRunning ? '运行中' : '空闲' }}

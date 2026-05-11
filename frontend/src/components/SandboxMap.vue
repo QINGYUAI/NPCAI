@@ -26,7 +26,7 @@
  *   - **不调用 toast / ElMessageBox**：所有 UI 反馈交父组件处理
  *   - **findReplyToActor 通过 prop 注入**：避免耦合事件 ring buffer（在 Sandbox.vue 里）
  */
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import * as Phaser from 'phaser'
 import type { SceneDetail, SceneNpcLink } from '../types/scene'
 import { resolveAvatarUrl } from '../utils/avatar'
@@ -483,18 +483,44 @@ function resetLayout() {
   if (props.detail) createGame(props.detail)
 }
 
-/** 挂载：等 DOM 就绪后创建 game */
-onMounted(() => {
-  if (props.detail) createGame(props.detail)
-})
+/**
+ * [M4.6.0·批次B-2] 仅当「画布拓扑」变化时重建 Phaser。
+ *
+ * 父组件 pollStatus 会替换整个 detail 引用且仅合并 simulation_meta；
+ * 若 watch 裸监听 props.detail，则每隔几秒销毁重建 Game → 闪烁 / 丢相机。
+ *
+ * 指纹刻意排除 simulation_meta（气泡仍靠 refreshBubbles + expose）。
+ */
+function layoutRebuildKey(d: SceneDetail | null): string {
+  if (!d) return ''
+  return JSON.stringify({
+    sid: d.id,
+    bg: d.background_image ?? null,
+    w: d.width ?? null,
+    h: d.height ?? null,
+    npcs: (d.npcs ?? []).map((n) => ({
+      id: n.npc_id,
+      nm: n.npc_name ?? '',
+      px: n.pos_x ?? null,
+      py: n.pos_y ?? null,
+      cat: n.npc_category ?? null,
+      av: n.npc_avatar ?? null,
+      rn: n.role_note ?? null,
+    })),
+  })
+}
 
-/** detail 变化：重建 game（覆盖切场景 / 保存后刷新等场景） */
 watch(
-  () => props.detail,
-  (d) => {
-    if (d) createGame(d)
-    else destroyGame()
+  () => layoutRebuildKey(props.detail),
+  (key, prevKey) => {
+    if (key === prevKey) return
+    if (!props.detail) {
+      destroyGame()
+      return
+    }
+    createGame(props.detail)
   },
+  { flush: 'post' },
 )
 
 /** bubbleEnabled 切换：立刻刷新一次（true → 渲染，false → 清空） */
