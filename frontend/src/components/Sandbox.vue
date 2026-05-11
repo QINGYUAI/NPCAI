@@ -49,8 +49,9 @@ import SandboxReflections from './SandboxReflections.vue'
 import SandboxEvents from './SandboxEvents.vue'
 import SandboxEventInjectorDialog from './SandboxEventInjectorDialog.vue'
 import SandboxMap from './SandboxMap.vue'
-import { NPC_CATEGORIES } from '../constants/npc'
-import { categoryCss, fallbackPosition } from '../utils/sandbox'
+import SandboxToolbar from './SandboxToolbar.vue'
+import SandboxAsidePanel from './SandboxAsidePanel.vue'
+import { fallbackPosition } from '../utils/sandbox'
 import { extractPlanFromMeta } from '../utils/planPath'
 
 /** 画布视口尺寸（DOM 像素，Phaser Game 的 width/height） */
@@ -156,18 +157,6 @@ function resetTimeline() {
   eventDrawerVisible.value = false
   eventDialogVisible.value = false
   eventSubmitting.value = new Set()
-}
-
-/** 顶栏累计标签展示：$ 保留 4 位；未知（null）降级为 `$?` */
-function fmtSessionCost(v: number | null): string {
-  if (v == null) return '$?'
-  if (v === 0) return '$0.0000'
-  if (v < 0.0001) return `$${v.toExponential(2)}`
-  return `$${v.toFixed(4)}`
-}
-/** tokens 简写：≥10k → "1.2k"，否则原值 */
-function fmtTokensShort(n: number): string {
-  return n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 }
 
 /**
@@ -1123,175 +1112,50 @@ onBeforeUnmount(() => {
   stopBubbleTimer()
   stopEngineObserver()
 })
-
-function categoryLabel(v: string | null | undefined) {
-  return NPC_CATEGORIES.find((c) => c.value === v)?.label || v || '—'
-}
 </script>
 
 <template>
   <div>
-    <section class="flex flex-wrap items-center gap-3 mb-4">
-      <div class="flex items-center gap-2">
-        <span class="text-sm text-[var(--ainpc-muted)]">场景</span>
-        <el-select v-model="activeSceneId" placeholder="选择场景" filterable class="w-60" :disabled="loading">
-          <el-option v-for="s in scenes" :key="s.id" :label="s.name" :value="s.id" />
-        </el-select>
-        <el-button :disabled="loading" @click="loadScenes">刷新场景</el-button>
-      </div>
-      <div class="flex items-center gap-2">
-        <el-tooltip content="从 NPC.simulation_meta 读取 latest_say / latest_action 显示气泡" placement="top">
-          <el-switch v-model="bubbleEnabled" active-text="状态气泡" inline-prompt />
-        </el-tooltip>
-        <el-select v-if="bubbleEnabled" v-model="bubbleIntervalMs" size="small" class="w-28">
-          <el-option label="2 秒" :value="2000" />
-          <el-option label="5 秒" :value="5000" />
-          <el-option label="10 秒" :value="10000" />
-          <el-option label="30 秒" :value="30000" />
-        </el-select>
-      </div>
-      <div class="flex items-center gap-2">
-        <el-tooltip content="开启后拖拽始终吸附到网格；关闭时按住 Shift 临时吸附" placement="top">
-          <el-switch v-model="snapEnabled" active-text="网格吸附" inline-prompt />
-        </el-tooltip>
-        <el-select v-model="snapStep" size="small" class="w-24">
-          <el-option label="10 px" :value="10" />
-          <el-option label="20 px" :value="20" />
-          <el-option label="40 px" :value="40" />
-          <el-option label="80 px" :value="80" />
-        </el-select>
-      </div>
-      <!-- M4.1 引擎控制条 -->
-      <div class="flex items-center gap-2 px-2 py-1 rounded border border-[var(--ainpc-border)] bg-[rgba(13,17,23,0.45)]">
-        <span class="text-xs text-[var(--ainpc-muted)]">引擎</span>
-        <el-tag v-if="engineRunning" type="success" size="small" effect="dark">
-          运行 #{{ engineStatus?.tick ?? 0 }}
-        </el-tag>
-        <el-tag v-else type="info" size="small">停止</el-tag>
-        <el-tooltip content="dry_run：跳过 LLM 仅跑确定性伪输出，用于验证链路" placement="top">
-          <el-switch v-model="engineDryRun" active-text="dry_run" inline-prompt :disabled="engineRunning" />
-        </el-tooltip>
-        <el-select v-model="engineInterval" size="small" class="w-24" :disabled="engineRunning">
-          <el-option label="2 秒" :value="2000" />
-          <el-option label="5 秒" :value="5000" />
-          <el-option label="10 秒" :value="10000" />
-          <el-option label="30 秒" :value="30000" />
-          <el-option label="60 秒" :value="60000" />
-        </el-select>
-        <el-button-group>
-          <el-tooltip content="启动 tick 循环" placement="top">
-            <el-button size="small" type="primary" :disabled="!activeSceneId || engineRunning"
-              :loading="engineLoading && !engineRunning" @click="onEngineStart">▶</el-button>
-          </el-tooltip>
-          <el-tooltip content="执行单次 tick（未启动时临时跑一次）" placement="top">
-            <el-button size="small" :disabled="!activeSceneId || engineLoading" @click="onEngineStep">⏭</el-button>
-          </el-tooltip>
-          <el-tooltip content="软停（等当前 tick 完）" placement="top">
-            <el-button size="small" :disabled="!engineRunning" :loading="engineLoading && engineRunning"
-              @click="onEngineStop(false)">⏸</el-button>
-          </el-tooltip>
-        </el-button-group>
-        <!-- M4.2.0 meta 软阈值告警 -->
-        <el-tooltip v-if="latestMetaWarn" placement="bottom"
-          :content="`NPC#${latestMetaWarn.npc_id} tick#${latestMetaWarn.tick} simulation_meta=${(latestMetaWarn.bytes/1024).toFixed(1)}KB 超软阈值 ${(latestMetaWarn.soft_limit/1024).toFixed(0)}KB，建议精简`">
-          <el-tag type="warning" size="small" effect="dark" class="meta-warn-pill">
-            ⚠ meta {{ (latestMetaWarn.bytes / 1024).toFixed(1) }}KB
-          </el-tag>
-        </el-tooltip>
-        <!-- [M4.2.1.b] WebSocket 连接状态徽章 -->
-        <el-tooltip v-if="engineRunning && engineStatus?.ws_endpoint" placement="bottom"
-          :content="wsState === 'open' ? 'WebSocket 实时推送中' :
-                    wsState === 'connecting' ? '正在连接 WebSocket…' :
-                    wsState === 'degraded' ? 'WebSocket 连续失败，已降级为 3s 轮询' :
-                    'WebSocket 已断开，重连中…'">
-          <el-tag
-            size="small"
-            :type="wsState === 'open' ? 'success' : wsState === 'degraded' ? 'warning' : 'info'"
-            effect="plain"
-          >
-            {{ wsState === 'open' ? '● WS' : wsState === 'degraded' ? '○ 轮询' : '◐ WS…' }}
-          </el-tag>
-        </el-tooltip>
-        <!-- [M4.2.2.c] 记忆降级徽章：Qdrant 不可用或 embedding 失败 5 分钟窗口内亮起 -->
-        <el-tooltip v-if="engineStatus?.memory_degraded" placement="bottom"
-          content="记忆子系统降级：近 5 分钟内 Qdrant 不可用或 embedding 失败，NPC 仍可对话但回忆降级为 MySQL importance 排序">
-          <el-tag type="warning" size="small" effect="dark" class="memory-warn-pill">
-            🧠 记忆降级
-          </el-tag>
-        </el-tooltip>
-        <!-- [M4.2.1.c] 会话累计 tokens/cost：点击在小屏呼出时间线抽屉，大屏直接滚动到时间线浮窗 -->
-        <el-tooltip placement="bottom"
-          content="本会话累计 tokens / cost（切场景或刷新归零）；点击展开时间线">
-          <el-tag size="small" type="success" effect="plain" class="session-sum-pill"
-            @click="onTimelinePillClick">
-            Σ {{ fmtSessionCost(sessionCostUsd) }} · {{ fmtTokensShort(sessionTokens) }}tok
-          </el-tag>
-        </el-tooltip>
-        <!-- [M4.2.3.c] 反思徽章：WS reflection.created 事件 +1，点击展开抽屉 -->
-        <el-tooltip placement="bottom"
-          content="本会话反思条数（每次触发 3 条主题，同组合并为 1）。tick 为 REFLECT_EVERY_N_TICK 倍数时自动触发；也可在右键菜单手动触发">
-          <el-tag size="small" type="warning" effect="plain" class="reflection-pill"
-            @click="onReflectionPillClick">
-            🧘 {{ reflectionEntries.length }}
-          </el-tag>
-        </el-tooltip>
-        <!-- [M4.2.4.c] 事件徽章：WS scene.event.created 或本端 POST 后 +1，点击展开抽屉 -->
-        <el-tooltip placement="bottom"
-          content="本会话收到的场景事件条数（含首屏补发）。事件会被引擎下一 tick 相应 NPC 的 plan prompt 消费">
-          <el-tag size="small" type="info" effect="plain" class="event-pill"
-            @click="onEventPillClick">
-            📢 {{ eventEntries.length }}
-          </el-tag>
-        </el-tooltip>
-      </div>
-      <!-- [M4.2.4.c] 事件注入控制条：2 个快捷预设 + 1 个自定义对话框入口 -->
-      <div class="flex items-center gap-2 px-2 py-1 rounded border border-[var(--ainpc-border)] bg-[rgba(13,17,23,0.45)]">
-        <span class="text-xs text-[var(--ainpc-muted)]">事件</span>
-        <el-tooltip content="注入「下雨」天气事件（全场景可见）" placement="top">
-          <el-button
-            size="small"
-            :disabled="!activeSceneId"
-            :loading="eventSubmitting.has('rain')"
-            @click="onEventPreset('rain')"
-          >🌧️ 下雨</el-button>
-        </el-tooltip>
-        <el-tooltip content="注入「地震」剧情事件（全场景可见）" placement="top">
-          <el-button
-            size="small"
-            :disabled="!activeSceneId"
-            :loading="eventSubmitting.has('earthquake')"
-            @click="onEventPreset('earthquake')"
-          >🌋 地震</el-button>
-        </el-tooltip>
-        <el-tooltip content="打开自定义事件对话框（可选 4 类型、可定向投递）" placement="top">
-          <el-button size="small" type="primary" :disabled="!activeSceneId" @click="onEventCustomClick">
-            💬 自定义事件
-          </el-button>
-        </el-tooltip>
-      </div>
-      <div class="flex-1" />
-      <div class="flex items-center gap-2">
-        <el-button-group>
-          <el-tooltip content="缩小" placement="top">
-            <el-button :disabled="!detail || loading" @click="zoomOut">−</el-button>
-          </el-tooltip>
-          <el-tooltip content="适配" placement="top">
-            <el-button :disabled="!detail || loading" @click="zoomFit">
-              {{ Math.round(zoomLevel * 100) }}%
-            </el-button>
-          </el-tooltip>
-          <el-tooltip content="放大" placement="top">
-            <el-button :disabled="!detail || loading" @click="zoomIn">+</el-button>
-          </el-tooltip>
-        </el-button-group>
-        <el-tag v-if="dirty" type="warning" size="small">未保存</el-tag>
-        <el-button :disabled="!detail || loading" @click="autoArrange">网格排布</el-button>
-        <el-button :disabled="!detail || !dirty || loading" @click="resetLayout">撤销</el-button>
-        <el-button type="primary" :loading="saving" :disabled="!detail || !dirty" @click="saveLayout">
-          保存布局
-        </el-button>
-      </div>
-    </section>
+    <SandboxToolbar
+      v-model:active-scene-id="activeSceneId"
+      v-model:bubble-enabled="bubbleEnabled"
+      v-model:bubble-interval-ms="bubbleIntervalMs"
+      v-model:snap-enabled="snapEnabled"
+      v-model:snap-step="snapStep"
+      v-model:engine-dry-run="engineDryRun"
+      v-model:engine-interval="engineInterval"
+      :scenes="scenes"
+      :loading="loading"
+      :engine-running="engineRunning"
+      :engine-status="engineStatus"
+      :engine-loading="engineLoading"
+      :latest-meta-warn="latestMetaWarn"
+      :ws-state="wsState"
+      :session-tokens="sessionTokens"
+      :session-cost-usd="sessionCostUsd"
+      :reflection-count="reflectionEntries.length"
+      :event-count="eventEntries.length"
+      :event-submitting="eventSubmitting"
+      :detail="detail"
+      :dirty="dirty"
+      :saving="saving"
+      :zoom-level="zoomLevel"
+      @load-scenes="loadScenes"
+      @engine-start="onEngineStart"
+      @engine-step="onEngineStep"
+      @engine-stop="onEngineStop($event)"
+      @timeline-pill-click="onTimelinePillClick"
+      @reflection-pill-click="onReflectionPillClick"
+      @event-pill-click="onEventPillClick"
+      @event-preset="onEventPreset($event)"
+      @event-custom-click="onEventCustomClick"
+      @zoom-in="zoomIn"
+      @zoom-out="zoomOut"
+      @zoom-fit="zoomFit"
+      @auto-arrange="autoArrange"
+      @reset-layout="resetLayout"
+      @save-layout="saveLayout"
+    />
 
     <el-empty v-if="!loading && scenes.length === 0" description="尚无启用状态的场景，请先在「场景」Tab 创建" />
 
@@ -1354,40 +1218,7 @@ function categoryLabel(v: string | null | undefined) {
         </div>
       </div>
 
-      <aside class="sandbox-aside flex-1 min-w-0">
-        <!-- [M4.2.1.c] 场景详情 aside；右侧再挂 SandboxTimeline（panel 模式，仅宽屏） -->
-        <h3 class="text-sm font-semibold text-[#f0f6fc] mb-2">
-          {{ activeScene?.name || '—' }}
-          <el-tag v-if="activeScene" size="small" type="info" class="ml-1">
-            {{ categoryLabel(activeScene.category) }}
-          </el-tag>
-        </h3>
-        <p v-if="activeScene?.description" class="text-xs text-[var(--ainpc-muted)] mb-3 leading-relaxed">
-          {{ activeScene.description }}
-        </p>
-        <p v-if="activeScene?.background_image" class="text-xs text-[var(--ainpc-muted)] mb-3 truncate">
-          底图：<span class="text-[#79c0ff]">{{ activeScene.background_image }}</span>
-        </p>
-        <p v-else class="text-xs text-[var(--ainpc-muted)] mb-3">
-          未设置底图（使用网格），可在「场景」Tab 的表单里配置
-        </p>
-
-        <el-divider content-position="left">关联角色（{{ detail?.npcs.length ?? 0 }}）</el-divider>
-        <el-empty v-if="!detail || detail.npcs.length === 0" :image-size="50"
-          description="请先在「场景」Tab 为该场景添加角色" />
-        <ul v-else class="space-y-1 text-xs max-h-[320px] overflow-auto pr-1">
-          <li v-for="n in detail.npcs" :key="n.npc_id"
-            class="flex items-center gap-2 py-1 border-b border-[var(--ainpc-border)] last:border-none">
-            <span class="sandbox-dot" :style="{ background: categoryCss(n.npc_category) }" />
-            <span class="font-medium text-[#f0f6fc]">{{ n.npc_name }}</span>
-            <span v-if="n.role_note" class="text-[var(--ainpc-muted)] truncate">（{{ n.role_note }}）</span>
-            <span class="ml-auto text-[var(--ainpc-muted)] font-mono-nums">
-              {{ n.pos_x != null ? Math.round(Number(n.pos_x)) : '—' }},
-              {{ n.pos_y != null ? Math.round(Number(n.pos_y)) : '—' }}
-            </span>
-          </li>
-        </ul>
-      </aside>
+      <SandboxAsidePanel :active-scene="activeScene" :detail="detail" />
       </div>
 
       <!-- [M4.2.1.c] 右侧独立列：tick 时间线浮窗（仅宽屏 ≥1280px） -->
@@ -1521,72 +1352,6 @@ function categoryLabel(v: string | null | undefined) {
   position: absolute;
   inset: 0;
   padding: 1rem;
-}
-
-.sandbox-aside {
-  border: 1px solid var(--ainpc-border);
-  border-radius: 8px;
-  padding: 1rem;
-  background: rgba(13, 17, 23, 0.55);
-}
-
-.sandbox-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.font-mono-nums {
-  font-variant-numeric: tabular-nums;
-}
-
-/* M4.2.0 meta-warn 小徽标：让其在引擎控制条末尾更醒目 */
-.meta-warn-pill {
-  margin-left: 2px;
-  animation: meta-warn-flash 1.6s ease-in-out 0s 2 alternate;
-}
-
-/* [M4.2.2.c] 记忆降级徽标：持续 5 分钟窗口期可见，无限慢脉冲提示降级状态 */
-.memory-warn-pill {
-  margin-left: 2px;
-  animation: meta-warn-flash 2.4s ease-in-out infinite alternate;
-}
-
-/* [M4.2.1.c] 顶栏会话累计标签：鼠标指针提示可点击 */
-.session-sum-pill {
-  cursor: pointer;
-  font-variant-numeric: tabular-nums;
-  user-select: none;
-}
-.session-sum-pill:hover {
-  filter: brightness(1.15);
-}
-/** [M4.2.3.c] 反思徽章：与 session-sum-pill 风格一致，warning 色区分 */
-.reflection-pill {
-  cursor: pointer;
-  font-variant-numeric: tabular-nums;
-  user-select: none;
-  margin-left: 2px;
-}
-.reflection-pill:hover {
-  filter: brightness(1.15);
-}
-
-/* [M4.2.4.c] 事件徽章：与反思徽章同样的 hover/点击手感 */
-.event-pill {
-  cursor: pointer;
-  font-variant-numeric: tabular-nums;
-  user-select: none;
-  margin-left: 2px;
-}
-.event-pill:hover {
-  filter: brightness(1.15);
-}
-@keyframes meta-warn-flash {
-  from { opacity: 0.6; }
-  to { opacity: 1; }
 }
 
 .sandbox-ctx-menu {
